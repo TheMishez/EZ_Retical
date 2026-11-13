@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+  <title>Mishez Xhair</title>
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">&#9678; Mishez Xhair</div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="crosshair">Crosshair</button>
+      <button class="tab-btn" data-tab="pros">Pro Crosshairs</button>
+      <button class="tab-btn" data-tab="trainer">Aim Trainer</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+    </nav>
+    <button id="pill" class="pill" title="Toggle the overlay"></button>
+  </header>
+
+  <main>
+    <!-- ============ CROSSHAIR ============ -->
+    <section id="tab-crosshair" class="tab active">
+      <div id="editBar" class="editbar" hidden>
+        <span id="editBarText"></span>
+        <button id="editSaveBtn" class="primary"></button>
+        <button id="editCancelBtn">Cancel</button>
+      </div>
+      <div class="cols">
+        <div class="left">
+          <div class="card">
+            <div id="previewWrap" class="preview bg-dark"><canvas id="previewCanvas"></canvas></div>
+            <div class="preview-bar">
+              <span id="zoomLabel" class="muted"></span>
+              <span class="bgs">
+                <button data-bg="dark" title="Dark">&#9632;</button>
+                <button data-bg="light" title="Light">&#9633;</button>
+                <button data-bg="grass" title="Grass">&#9650;</button>
+                <button data-bg="sky" title="Sky">&#9679;</button>
+              </span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Share</h3>
+            <div class="stack">
+              <button id="exportBtn">Copy my crosshair code</button>
+              <textarea id="importIn" rows="2" placeholder="Paste a crosshair code (XH1:...)"></textarea>
+              <div class="btns">
+                <button id="importBtn">Import</button>
+                <button id="pasteBtn">Paste from clipboard</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Saved crosshairs</h3>
+            <div class="btns">
+              <input id="profileName" type="text" maxlength="40" placeholder="Name">
+              <button id="saveProfileBtn" class="primary">Save</button>
+            </div>
+            <div id="profileList" class="plist"></div>
+          </div>
+        </div>
+
+        <div class="right card" id="controls"></div>
+      </div>
+    </section>
+
+    <!-- ============ PROS ============ -->
+    <section id="tab-pros" class="tab">
+      <div class="pros-top card">
+        <div class="stack">
+          <h3>Import a CS2 crosshair code</h3>
+          <div class="btns">
+            <input id="csCode" type="text" placeholder="CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx" spellcheck="false">
+            <button id="csImportBtn" class="primary">Import</button>
+          </div>
+        </div>
+        <div class="pros-opts">
+          <label>Game screen height
+            <input id="proHeight" type="number" min="480" max="4320" step="1" value="1080">
+          </label>
+          <label>Size calibration
+            <input id="proScale" type="range" min="0.5" max="2" step="0.05" value="1">
+            <output id="proScaleOut">1.00&times;</output>
+          </label>
+        </div>
+      </div>
+      <div class="pros-search">
+        <input id="proSearch" type="text" placeholder="Search players&hellip;" spellcheck="false">
+        <span id="proCount" class="muted small"></span>
+      </div>
+      <div id="proGrid" class="pro-grid"></div>
+      <p class="muted small">Codes come from public pro-crosshair lists (csdb.gg, wecoach.gg). Pros change crosshairs often, so these may be out of date. Sizes are converted from CS2 units to pixels using your game&rsquo;s screen height; if a crosshair looks too big or small next to CS2, nudge the calibration slider.</p>
+    </section>
+
+    <!-- ============ TRAINER ============ -->
+    <section id="tab-trainer" class="tab">
+      <div class="trainer-bar">
+        <label>Mode
+          <select id="tMode">
+            <option value="gridshot">Gridshot</option>
+            <option value="flick">Flick</option>
+            <option value="tracking">Tracking</option>
+          </select>
+        </label>
+        <label>Time
+          <select id="tTime">
+            <option value="15">15s</option>
+            <option value="30" selected>30s</option>
+            <option value="60">60s</option>
+          </select>
+        </label>
+        <label>Sensitivity
+          <input id="tSens" type="range" min="0.2" max="3" step="0.1" value="1">
+          <output id="tSensOut">1.0&times;</output>
+        </label>
+        <label class="chk"><input id="tLock" type="checkbox" checked> Capture mouse</label>
+        <label class="chk"><input id="tDaily" type="checkbox"> Daily seed</label>
+        <button id="tStart" class="primary">Start</button>
+      </div>
+      <canvas id="trainerCanvas"></canvas>
+      <div id="tStats" class="trainer-stats"></div>
+      <p class="muted small">Your crosshair is drawn as the cursor. Gridshot: click the three targets. Flick: one small target at a time. Tracking: hold left mouse on the moving target. Sensitivity applies while the mouse is captured; Esc releases it and stops the run. The daily seed gives everyone the same target sequence for the day (scores are stored locally).</p>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section id="tab-settings" class="tab">
+      <div class="card narrow">
+        <h3>Overlay</h3>
+        <div class="row"><span class="name">Show crosshair overlay</span><span class="ctl"><input type="checkbox" id="overlayToggle"></span></div>
+        <div class="row"><span class="name">Toggle hotkey</span><span class="ctl"><button id="hotkeyBtn"></button></span></div>
+        <div class="row"><span class="name">Display</span><span class="ctl"><select id="displaySel"></select></span></div>
+        <div class="row"><span class="name">Start with Windows</span><span class="ctl"><input type="checkbox" id="autoStart"></span></div>
+        <p id="autoStartNote" class="muted small"></p>
+        <p id="hookWarn" class="warn" hidden>The global input hook could not be loaded, so click and WASD animations won't trigger over games. Run <code>npm install</code> again, or set Animation to None.</p>
+      </div>
+      <div class="card narrow">
+        <h3>Compatibility</h3>
+        <p class="muted small">The crosshair is a separate transparent window drawn on top of everything. It never touches the game process. It only shows over games running in <b>borderless windowed</b> or windowed mode, not exclusive fullscreen. The input hook is only started while an animation other than None is selected.</p>
+      </div>
+      <div class="card narrow">
+        <h3>Reset</h3>
+        <button id="resetBtn">Reset crosshair to defaults</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="crosshair.js"></script>
+  <script src="sharecode.js"></script>
+  <script src="pros.js"></script>
+  <script src="trainer.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>
