@@ -1,16 +1,47 @@
 'use strict';
 
 const {
-  app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, nativeImage, clipboard
+  app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, nativeImage, clipboard, dialog
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { spawn, execFile } = require('child_process');
 const Crosshair = require('./crosshair.js');
 
-const OVERLAY_SIZE = 800; // transparent, click-through square centred on the chosen display
+// The overlay is a tiny transparent click-through window sized to the crosshair (not full screen),
+// so the compositor only ever handles a few thousand pixels.
+const MIN_OVERLAY = 48;
+const MAX_OVERLAY = 1000;
 const BLOCKED_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
+// Memory mode is read from the settings file before Electron starts (these switches must be set early).
+function earlyMemoryMode() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
+    return ['balanced', 'low', 'lowest'].indexOf(raw.memoryMode) >= 0 ? raw.memoryMode : 'low';
+  } catch (e) {
+    return 'low';
+  }
+}
+const MEMORY_MODE = earlyMemoryMode();
+const DISABLED_FEATURES = ['CalculateNativeWinOcclusion'];
+if (MEMORY_MODE !== 'balanced') {
+  // Smaller caches and heaps. The overlay is a tiny canvas, so none of this changes how it looks or feels.
+  DISABLED_FEATURES.push('MediaRouter', 'OptimizationHints', 'Translate', 'AutofillServerCommunication', 'InterestFeedContentSuggestions');
+  app.commandLine.appendSwitch('js-flags', '--max-old-space-size=128 --max-lazy');
+  app.commandLine.appendSwitch('enable-low-end-device-mode');
+  app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+  app.commandLine.appendSwitch('disable-background-networking');
+  app.commandLine.appendSwitch('disable-component-update');
+}
+// "Lowest" also renders in software: removes the GPU process (the biggest single saving) at a small CPU cost.
+if (MEMORY_MODE === 'lowest') app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-features', DISABLED_FEATURES.join(','));
+
 let config;
+let activeProfile = null;
+let overlaySize = 0;
 let overlayWin = null;
 let editorWin = null;
 let tray = null;
@@ -18,34 +49,29 @@ let quitting = false;
 let saveTimer = null;
 let icon32 = null;
 let icon64 = null;
+let guideOn = false; // alignment guide shown on the overlay (not saved)
+let guideTimer = null;
+let followCenter = null; // physical-pixel centre of the game window we follow, or null
+let watcher = null; // PowerShell foreground-window watcher
+let autoActive = false; // a per-game crosshair is currently applied
+let revertDesign = null; // what to go back to when leaving the game
+let revertProfile = null;
+let lastGame = '';
 
 // Global input hook (only started when a click/key animation is selected)
 let hookMod = null;
 let hookWired = false;
 let hookState = 'off'; // 'off' | 'running' | 'unavailable'
+const heldInputs = new Set(); // canonical names of inputs currently held
 
 // ---------------------------------------------------------------- icons
-// Generated in code so the project needs no binary assets.
+// The EZ Reticle logo (logo.png next to this file); falls back to an empty image if it is missing.
 function makeIcon(size) {
-  const buf = Buffer.alloc(size * size * 4, 0);
-  const c = (size - 1) / 2;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const dx = x - c;
-      const dy = y - c;
-      const d = Math.hypot(dx, dy);
-      const ring = Math.abs(d - size * 0.36) < size * 0.06;
-      const cross = (Math.abs(dx) < size * 0.05 || Math.abs(dy) < size * 0.05) && d < size * 0.48 && d > size * 0.14;
-      if (ring || cross) {
-        const i = (y * size + x) * 4;
-        buf[i] = 102; // B
-        buf[i + 1] = 255; // G
-        buf[i + 2] = 0; // R
-        buf[i + 3] = 255; // A
-      }
-    }
-  }
-  return nativeImage.createFromBitmap(buf, { width: size, height: size });
+  try {
+    const img = nativeImage.createFromPath(path.join(__dirname, 'logo.png'));
+    if (!img.isEmpty()) return img.resize({ width: size, height: size, quality: 'best' });
+  } catch (e) { /* fall through */ }
+  return nativeImage.createEmpty();
 }
 
 // ---------------------------------------------------------------- settings
@@ -53,25 +79,67 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+function clampNum(v, lo, hi, def) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+}
+
+// {"cs2": "My Profile"}: lowercase process name (no .exe) -> saved crosshair name.
+function exeKey(v) {
+  return String(v || '').trim().toLowerCase().replace(/\.exe$/, '').replace(/[^a-z0-9 _.\-]/g, '').slice(0, 60);
+}
+
+function cleanGames(g) {
+  const out = {};
+  if (g && typeof g === 'object') {
+    for (const [k, v] of Object.entries(g)) {
+      const key = exeKey(k);
+      if (!key || BLOCKED_NAMES.has(key) || typeof v !== 'string' || !v || Object.keys(out).length >= 60) continue;
+      out[key] = String(v).slice(0, 40);
+    }
+  }
+  return out;
+}
+
 function loadConfig() {
   let raw = {};
   try {
     raw = JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));
-  } catch (e) { /* first run or unreadable file: use defaults */ }
+  } catch (e) {
+    // First run, or the file is damaged: keep a copy of a damaged one so nothing is silently lost.
+    try { if (fs.existsSync(settingsPath())) fs.copyFileSync(settingsPath(), settingsPath() + '.corrupt'); } catch (e2) { /* ignore */ }
+  }
   const profiles = {};
   if (raw.profiles && typeof raw.profiles === 'object') {
     for (const [k, v] of Object.entries(raw.profiles)) {
       const name = String(k).trim().slice(0, 40);
       if (!name || BLOCKED_NAMES.has(name) || Object.keys(profiles).length >= 200) continue;
-      profiles[name] = Crosshair.sanitize(v);
+      profiles[name] = Crosshair.sanitizeDesign(v);
     }
   }
   return {
-    crosshair: Crosshair.sanitize(raw.crosshair),
+    crosshair: Crosshair.sanitizeDesign(raw.crosshair || Crosshair.DEFAULT_DESIGN),
+    displayMode: raw.displayMode === 'fullscreen' ? 'fullscreen' : 'borderless',
+    triggers: Crosshair.sanitizeTriggers(raw.triggers),
+    hotkeyNext: typeof raw.hotkeyNext === 'string' && raw.hotkeyNext ? raw.hotkeyNext : 'F9',
+    hotkeyPrev: typeof raw.hotkeyPrev === 'string' && raw.hotkeyPrev ? raw.hotkeyPrev : 'Shift+F9',
+    overlayScale: clampNum(raw.overlayScale, 0.5, 3, 1),
+    overlayOpacity: clampNum(raw.overlayOpacity, 0.2, 1, 1),
+    fpsCap: [0, 30, 60, 120].indexOf(raw.fpsCap) >= 0 ? raw.fpsCap : 60,
+    lowPriority: raw.lowPriority !== false,
+    startHidden: !!raw.startHidden,
+    accentColor: /^#[0-9a-f]{6}$/i.test(raw.accentColor || '') ? raw.accentColor.toLowerCase() : '#3ddc84',
+    memoryMode: ['balanced', 'low', 'lowest'].indexOf(raw.memoryMode) >= 0 ? raw.memoryMode : 'low',
     overlayVisible: raw.overlayVisible !== false,
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey ? raw.hotkey : 'F8',
     displayId: Number.isInteger(raw.displayId) ? raw.displayId : null,
     autoStart: !!raw.autoStart,
+    overlayOffsetX: Math.round(clampNum(raw.overlayOffsetX, -100, 100, 0)),
+    overlayOffsetY: Math.round(clampNum(raw.overlayOffsetY, -100, 100, 0)),
+    autoSwitch: !!raw.autoSwitch,
+    autoRevert: raw.autoRevert !== false,
+    followWindow: !!raw.followWindow,
+    gameProfiles: cleanGames(raw.gameProfiles),
     profiles
   };
 }
@@ -95,7 +163,27 @@ function publicState() {
     overlayVisible: config.overlayVisible,
     hotkey: config.hotkey,
     displayId: config.displayId,
+    displayMode: config.displayMode,
+    triggers: config.triggers,
+    hotkeyNext: config.hotkeyNext,
+    hotkeyPrev: config.hotkeyPrev,
+    overlayScale: config.overlayScale,
+    overlayOpacity: config.overlayOpacity,
+    fpsCap: config.fpsCap,
+    lowPriority: config.lowPriority,
+    startHidden: config.startHidden,
+    accentColor: config.accentColor,
+    memoryMode: config.memoryMode,
+    memoryActive: MEMORY_MODE,
     autoStart: config.autoStart,
+    overlayOffsetX: config.overlayOffsetX,
+    overlayOffsetY: config.overlayOffsetY,
+    autoSwitch: config.autoSwitch,
+    autoRevert: config.autoRevert,
+    followWindow: config.followWindow,
+    gameProfiles: config.gameProfiles,
+    guide: guideOn,
+    watcherOn: !!watcher,
     profiles: config.profiles,
     hookState,
     isPackaged: app.isPackaged
@@ -122,15 +210,98 @@ function targetDisplay() {
   return all.find((d) => d.id === config.displayId) || screen.getPrimaryDisplay();
 }
 
+// Window side in DIPs: big enough for the design at the chosen scale, rounded to 16 so that
+// slider drags don't resize the window constantly. Always even so the centre stays pixel-exact.
+function desiredOverlaySize() {
+  const r = Crosshair.designRadius(config.crosshair) * config.overlayScale * 1.1 + 6;
+  const side = Math.ceil((r * 2) / 16) * 16;
+  return Math.min(MAX_OVERLAY, Math.max(MIN_OVERLAY, side));
+}
+
+// Physical-pixel helpers (Windows reports window bounds in DIPs, but the game centre is a physical pixel).
+function toPhysRect(r) {
+  try { if (screen.dipToScreenRect) return screen.dipToScreenRect(null, r); } catch (e) { /* not supported */ }
+  return r;
+}
+
+function toDipRect(r) {
+  try { if (screen.screenToDipRect) return screen.screenToDipRect(null, r); } catch (e) { /* not supported */ }
+  return r;
+}
+
+// Where the overlay window should sit so its centre lands exactly on the target pixel.
+function overlayRect(size) {
+  let display = targetDisplay();
+  let cx;
+  let cy;
+  if (followCenter) {
+    cx = followCenter.x;
+    cy = followCenter.y;
+  } else {
+    const pb = toPhysRect(display.bounds);
+    cx = pb.x + pb.width / 2;
+    cy = pb.y + pb.height / 2;
+  }
+  cx += config.overlayOffsetX;
+  cy += config.overlayOffsetY;
+  // Ideal rectangle in DIPs, then try the neighbouring whole-DIP origins and keep whichever
+  // lands the physical centre closest (fractional scaling like 125% / 150% rounds otherwise).
+  let sf = display.scaleFactor || 1;
+  try {
+    if (followCenter && screen.getDisplayNearestPoint && screen.screenToDipPoint) {
+      sf = screen.getDisplayNearestPoint(screen.screenToDipPoint({ x: Math.round(cx), y: Math.round(cy) })).scaleFactor || sf;
+    }
+  } catch (e) { /* keep the target display's scale */ }
+  const phys = Math.round(size * sf);
+  const ideal = toDipRect({ x: Math.round(cx - phys / 2), y: Math.round(cy - phys / 2), width: phys, height: phys });
+  const side = size; // window is `size` DIPs wide
+  const bx = Math.round(ideal.x);
+  const by = Math.round(ideal.y);
+  let best = { x: bx, y: by, width: side, height: side };
+  let bestErr = Infinity;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const cand = { x: bx + dx, y: by + dy, width: side, height: side };
+      const pr = toPhysRect(cand);
+      const err = Math.abs(pr.x + pr.width / 2 - cx) + Math.abs(pr.y + pr.height / 2 - cy);
+      if (err < bestErr - 1e-9) { bestErr = err; best = cand; }
+    }
+  }
+  return best;
+}
+
 function positionOverlay() {
   if (!overlayWin || overlayWin.isDestroyed()) return;
-  const b = targetDisplay().bounds;
-  overlayWin.setBounds({
-    x: Math.round(b.x + b.width / 2 - OVERLAY_SIZE / 2),
-    y: Math.round(b.y + b.height / 2 - OVERLAY_SIZE / 2),
-    width: OVERLAY_SIZE,
-    height: OVERLAY_SIZE
-  });
+  overlaySize = desiredOverlaySize();
+  overlayWin.setBounds(overlayRect(overlaySize));
+}
+
+// How far (physical pixels) the overlay centre is from where it should be.
+function alignmentDiag() {
+  const display = targetDisplay();
+  const pb = toPhysRect(display.bounds);
+  const tx = (followCenter ? followCenter.x : pb.x + pb.width / 2) + config.overlayOffsetX;
+  const ty = (followCenter ? followCenter.y : pb.y + pb.height / 2) + config.overlayOffsetY;
+  let ox = null;
+  let oy = null;
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    const wp = toPhysRect(overlayWin.getBounds());
+    ox = wp.x + wp.width / 2 - tx;
+    oy = wp.y + wp.height / 2 - ty;
+  }
+  return {
+    displayId: display.id,
+    scale: display.scaleFactor,
+    physical: pb.width + '\u00d7' + pb.height,
+    errorX: ox,
+    errorY: oy,
+    following: !!followCenter
+  };
+}
+
+// Resizes only when the needed size actually changed.
+function fitOverlay() {
+  if (desiredOverlaySize() !== overlaySize) positionOverlay();
 }
 
 function applyOverlayVisibility() {
@@ -145,12 +316,13 @@ function applyOverlayVisibility() {
 }
 
 function createOverlay() {
-  const b = targetDisplay().bounds;
+  overlaySize = desiredOverlaySize();
+  const r0 = overlayRect(overlaySize);
   overlayWin = new BrowserWindow({
-    width: OVERLAY_SIZE,
-    height: OVERLAY_SIZE,
-    x: Math.round(b.x + b.width / 2 - OVERLAY_SIZE / 2),
-    y: Math.round(b.y + b.height / 2 - OVERLAY_SIZE / 2),
+    width: r0.width,
+    height: r0.height,
+    x: r0.x,
+    y: r0.y,
     transparent: true,
     frame: false,
     resizable: false,
@@ -169,7 +341,8 @@ function createOverlay() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      spellcheck: false
     }
   });
   overlayWin.setIgnoreMouseEvents(true);
@@ -181,6 +354,7 @@ function createOverlay() {
 function setOverlayVisible(v) {
   config.overlayVisible = !!v;
   applyOverlayVisibility();
+  syncHook();
   updateTrayMenu();
   saveSoon();
   broadcastState();
@@ -199,25 +373,26 @@ function createEditor() {
     minHeight: 660,
     show: false,
     backgroundColor: '#12141a',
-    title: 'Mishez Xhair',
+    title: 'EZ Reticle',
     icon: icon64,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      spellcheck: false
     }
   });
   editorWin.removeMenu();
   editorWin.loadFile(path.join(__dirname, 'editor.html'));
   editorWin.once('ready-to-show', () => editorWin.show());
-  editorWin.on('close', (e) => {
-    if (!quitting) {
-      e.preventDefault();
-      editorWin.hide(); // keep the overlay running in the tray
-    }
-  });
+  // Closing the editor fully unloads it (frees its memory); the overlay keeps running from the tray.
+  editorWin.on('closed', () => { editorWin = null; syncHook(); });
+  editorWin.on('show', syncHook);
+  editorWin.on('hide', syncHook);
+  editorWin.on('minimize', syncHook);
+  editorWin.on('restore', syncHook);
   editorWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   editorWin.webContents.on('will-navigate', (e) => e.preventDefault());
 }
@@ -243,57 +418,225 @@ function updateTrayMenu() {
   ]));
 }
 
-// ---------------------------------------------------------------- hotkey
-function registerHotkey(accel) {
-  try {
-    return globalShortcut.register(accel, toggleOverlay);
-  } catch (e) {
-    return false;
-  }
+// ---------------------------------------------------------------- hotkeys
+const HOTKEY_FIELDS = { toggle: 'hotkey', next: 'hotkeyNext', prev: 'hotkeyPrev' };
+
+function registerHotkeys() {
+  globalShortcut.unregisterAll();
+  const actions = { hotkey: toggleOverlay, hotkeyNext: () => cycleProfile(1), hotkeyPrev: () => cycleProfile(-1) };
+  Object.keys(actions).forEach((field) => {
+    const accel = config[field];
+    if (!accel) return;
+    try { globalShortcut.register(accel, actions[field]); } catch (e) { /* invalid accelerator */ }
+  });
 }
 
-function setHotkey(accel) {
-  if (typeof accel !== 'string' || !accel || accel.length > 40) return false;
-  globalShortcut.unregisterAll();
-  const ok = registerHotkey(accel);
-  if (ok) {
-    config.hotkey = accel;
-    saveSoon();
+function setHotkey(accel, which) {
+  const field = HOTKEY_FIELDS[which || 'toggle'];
+  if (!field || typeof accel !== 'string' || !accel || accel.length > 40) return false;
+  if (Object.keys(HOTKEY_FIELDS).some((w) => HOTKEY_FIELDS[w] !== field && config[HOTKEY_FIELDS[w]] === accel)) return false;
+  const prev = config[field];
+  config[field] = accel;
+  registerHotkeys();
+  const ok = globalShortcut.isRegistered(accel);
+  if (!ok) {
+    config[field] = prev;
+    registerHotkeys();
   } else {
-    registerHotkey(config.hotkey);
+    saveSoon();
   }
   broadcastState();
   return ok;
 }
 
+// Switches to the next/previous saved crosshair (alphabetical), from a hotkey.
+function cycleProfile(dir) {
+  const names = Object.keys(config.profiles).sort((a, b) => a.localeCompare(b));
+  if (!names.length) return;
+  const i = names.indexOf(activeProfile);
+  const n = names[i < 0 ? (dir > 0 ? 0 : names.length - 1) : (i + dir + names.length) % names.length];
+  applyDesign(config.profiles[n], n);
+}
+
+function applyDesign(design, profileName) {
+  activeProfile = profileName || null;
+  config.crosshair = Crosshair.sanitizeDesign(design);
+  sendTo(overlayWin, 'crosshair:changed', config.crosshair);
+  sendTo(editorWin, 'crosshair:changed', config.crosshair);
+  fitOverlay();
+  syncHook();
+  saveSoon();
+}
+
+// ---------------------------------------------------------------- per-game profiles + window follow
+const WATCH_SCRIPT = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[StructLayout(LayoutKind.Sequential)] public struct RECTX { public int L, T, R, B; }
+[StructLayout(LayoutKind.Sequential)] public struct PTX { public int X, Y; }
+public static class XH {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECTX r);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref PTX p);
+}
+'@
+[void][XH]::SetProcessDPIAware()
+$last = ''
+while ($true) {
+  $h = [XH]::GetForegroundWindow()
+  $procId = [uint32]0
+  [void][XH]::GetWindowThreadProcessId($h, [ref]$procId)
+  $n = ''
+  try { $n = [System.Diagnostics.Process]::GetProcessById([int]$procId).ProcessName } catch {}
+  $r = New-Object RECTX
+  [void][XH]::GetClientRect($h, [ref]$r)
+  $pt = New-Object PTX
+  [void][XH]::ClientToScreen($h, [ref]$pt)
+  $line = $n + '|' + $pt.X + '|' + $pt.Y + '|' + $r.R + '|' + $r.B
+  if ($line -ne $last) { $last = $line; [Console]::Out.WriteLine($line); [Console]::Out.Flush() }
+  Start-Sleep -Milliseconds 1000
+}
+`;
+
+const OWN_PROCS = new Set(['electron', 'ez reticle', 'ez-reticle', 'ezreticle', 'mishez xhair', 'mishez-xhair']);
+
+function wantWatcher() {
+  return process.platform === 'win32' &&
+    ((config.autoSwitch || config.followWindow) && Object.keys(config.gameProfiles).length > 0);
+}
+
+function stopWatcher() {
+  if (watcher) { try { watcher.kill(); } catch (e) { /* ignore */ } }
+  watcher = null;
+  followCenter = null;
+  lastGame = '';
+  if (autoActive && config.autoRevert && revertDesign) applyDesign(revertDesign, revertProfile);
+  autoActive = false;
+}
+
+function syncWatcher() {
+  const want = wantWatcher();
+  if (want && !watcher) startWatcher();
+  else if (!want && watcher) { stopWatcher(); positionOverlay(); }
+  broadcastState();
+}
+
+function startWatcher() {
+  const own = path.basename(process.execPath, '.exe').toLowerCase();
+  const enc = Buffer.from(WATCH_SCRIPT, 'utf16le').toString('base64');
+  let child;
+  try {
+    child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', enc], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (e) { logError(e); return; }
+  watcher = child;
+  let buf = '';
+  child.stdout.on('data', (d) => {
+    buf += d.toString();
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (line) onForeground(line, own);
+    }
+  });
+  child.on('exit', () => { if (watcher === child) { watcher = null; followCenter = null; broadcastState(); } });
+  child.on('error', (e) => { logError(e); if (watcher === child) watcher = null; });
+}
+
+function onForeground(line, own) {
+  const parts = line.split('|');
+  const name = exeKey(parts[0]);
+  if (!name || name === own || OWN_PROCS.has(name)) return; // ignore our own windows
+  const prof = config.gameProfiles[name];
+  lastGame = name;
+  if (config.autoSwitch) {
+    if (prof && config.profiles[prof]) {
+      if (!autoActive) { revertDesign = config.crosshair; revertProfile = activeProfile; }
+      if (!autoActive || activeProfile !== prof) applyDesign(config.profiles[prof], prof);
+      autoActive = true;
+    } else if (autoActive) {
+      autoActive = false;
+      if (config.autoRevert && revertDesign) applyDesign(revertDesign, revertProfile);
+    }
+  }
+  if (config.followWindow && prof) {
+    const x = Number(parts[1]);
+    const y = Number(parts[2]);
+    const w = Number(parts[3]);
+    const h = Number(parts[4]);
+    if ([x, y, w, h].every(Number.isFinite) && w >= 200 && h >= 200) {
+      const next = { x: x + w / 2, y: y + h / 2 };
+      if (!followCenter || followCenter.x !== next.x || followCenter.y !== next.y) {
+        followCenter = next;
+        positionOverlay();
+      }
+    }
+  } else if (followCenter) {
+    followCenter = null;
+    positionOverlay();
+  }
+}
+
+function listProcesses() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') { resolve([]); return; }
+    const cmd = "Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object -ExpandProperty ProcessName -Unique | Sort-Object";
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true, timeout: 8000 }, (err, out) => {
+      if (err) { resolve([]); return; }
+      const own = path.basename(process.execPath, '.exe').toLowerCase();
+      const seen = new Set();
+      String(out).split(/\r?\n/).forEach((l) => {
+        const k = exeKey(l);
+        if (k && k !== own && !OWN_PROCS.has(k) && seen.size < 200) seen.add(k);
+      });
+      resolve(Array.from(seen));
+    });
+  });
+}
+
 // ---------------------------------------------------------------- global input hook
 function forwardInput(evt) {
-  if (config.crosshair.animation === 'none') return;
+  if (!Crosshair.hasAnimation(config.crosshair)) return;
   if (config.overlayVisible) sendTo(overlayWin, 'input', evt);
   if (editorWin && !editorWin.isDestroyed() && editorWin.isVisible()) sendTo(editorWin, 'input', evt);
 }
 
 // Starts the hook only while a click/key animation is selected, and stops it otherwise.
 function syncHook() {
-  const want = config.crosshair.animation !== 'none';
+  const editorOpen = !!(editorWin && !editorWin.isDestroyed() && editorWin.isVisible() && !editorWin.isMinimized());
+  const want = Crosshair.hasAnimation(config.crosshair) && (config.overlayVisible || editorOpen);
   const before = hookState;
   if (want && hookState === 'off') {
     try {
       if (!hookMod) hookMod = require('uiohook-napi');
       const { uIOhook, UiohookKey } = hookMod;
       if (!hookWired) {
-        const keyMap = new Map([
-          [UiohookKey.W, 'w'], [UiohookKey.A, 'a'], [UiohookKey.S, 's'], [UiohookKey.D, 'd']
-        ]);
-        uIOhook.on('mousedown', (e) => forwardInput({ type: 'mousedown', button: e.button }));
-        uIOhook.on('keydown', (e) => {
-          const k = keyMap.get(e.keycode);
-          if (k) forwardInput({ type: 'keydown', key: k });
+        const keyNames = new Map();
+        Object.keys(UiohookKey).forEach((k) => {
+          if (typeof UiohookKey[k] === 'number') keyNames.set(UiohookKey[k], Crosshair.canonKey(k));
         });
-        uIOhook.on('keyup', (e) => {
-          const k = keyMap.get(e.keycode);
-          if (k) forwardInput({ type: 'keyup', key: k });
-        });
+        const press = (name, down) => {
+          if (!name) return;
+          const actions = Crosshair.actionsFor(config.triggers, name);
+          const active = (action) => config.triggers[action].some((n) => heldInputs.has(n));
+          if (down) {
+            if (heldInputs.has(name)) return; // key auto-repeat
+            const was = actions.map(active);
+            heldInputs.add(name);
+            actions.forEach((action, i) => { if (!was[i]) forwardInput({ type: 'trigger', action, down: true }); });
+          } else {
+            if (!heldInputs.delete(name)) return;
+            actions.forEach((action) => { if (!active(action)) forwardInput({ type: 'trigger', action, down: false }); });
+          }
+        };
+        uIOhook.on('mousedown', (e) => press('Mouse' + e.button, true));
+        uIOhook.on('mouseup', (e) => press('Mouse' + e.button, false));
+        uIOhook.on('keydown', (e) => press(keyNames.get(e.keycode), true));
+        uIOhook.on('keyup', (e) => press(keyNames.get(e.keycode), false));
         hookWired = true;
       }
       uIOhook.start();
@@ -305,6 +648,7 @@ function syncHook() {
   } else if (!want && hookState === 'running') {
     try { hookMod.uIOhook.stop(); } catch (e) { /* ignore */ }
     hookState = 'off';
+    heldInputs.clear();
   }
   if (hookState !== before) broadcastState();
 }
@@ -314,7 +658,8 @@ function setupIpc() {
   ipcMain.handle('config:get', () => publicConfig());
 
   ipcMain.handle('crosshair:set', (_e, ch) => {
-    config.crosshair = Crosshair.sanitize(ch);
+    config.crosshair = Crosshair.sanitizeDesign(ch);
+    fitOverlay();
     sendTo(overlayWin, 'crosshair:changed', config.crosshair);
     syncHook();
     saveSoon();
@@ -324,7 +669,7 @@ function setupIpc() {
   ipcMain.handle('profile:save', (_e, name, ch) => {
     const n = String(name || '').trim().slice(0, 40);
     if (!n || BLOCKED_NAMES.has(n)) return { ok: false };
-    config.profiles[n] = Crosshair.sanitize(ch);
+    config.profiles[n] = Crosshair.sanitizeDesign(ch);
     saveSoon();
     broadcastState();
     return { ok: true };
@@ -333,7 +678,9 @@ function setupIpc() {
   ipcMain.handle('profile:load', (_e, name) => {
     const n = String(name || '');
     if (!Object.prototype.hasOwnProperty.call(config.profiles, n)) return null;
-    config.crosshair = Crosshair.sanitize(config.profiles[n]);
+    config.crosshair = Crosshair.sanitizeDesign(config.profiles[n]);
+    activeProfile = n;
+    fitOverlay();
     sendTo(overlayWin, 'crosshair:changed', config.crosshair);
     syncHook();
     saveSoon();
@@ -348,17 +695,144 @@ function setupIpc() {
     return true;
   });
 
+  ipcMain.handle('triggers:set', (_e, t) => {
+    config.triggers = Crosshair.sanitizeTriggers(t);
+    heldInputs.clear();
+    saveSoon();
+    broadcastState();
+    return config.triggers;
+  });
+
+  ipcMain.handle('mode:set', (_e, mode) => {
+    config.displayMode = mode === 'fullscreen' ? 'fullscreen' : 'borderless';
+    startTopTimer();
+    saveSoon();
+    broadcastState();
+    return config.displayMode;
+  });
+
   ipcMain.handle('overlay:set', (_e, v) => {
     setOverlayVisible(!!v);
     return config.overlayVisible;
   });
 
-  ipcMain.handle('hotkey:set', (_e, accel) => ({ ok: setHotkey(accel), hotkey: config.hotkey }));
+  ipcMain.handle('hotkey:set', (_e, accel, which) => ({ ok: setHotkey(accel, which), hotkeys: { toggle: config.hotkey, next: config.hotkeyNext, prev: config.hotkeyPrev } }));
 
   ipcMain.handle('hotkey:pause', (_e, pause) => {
     if (pause) globalShortcut.unregisterAll();
-    else registerHotkey(config.hotkey);
+    else registerHotkeys();
     return true;
+  });
+
+  ipcMain.handle('settings:set', (_e, p) => {
+    p = p && typeof p === 'object' ? p : {};
+    if ('overlayScale' in p) config.overlayScale = clampNum(p.overlayScale, 0.5, 3, config.overlayScale);
+    if ('overlayOpacity' in p) config.overlayOpacity = clampNum(p.overlayOpacity, 0.2, 1, config.overlayOpacity);
+    if ('fpsCap' in p && [0, 30, 60, 120].indexOf(p.fpsCap) >= 0) config.fpsCap = p.fpsCap;
+    if ('lowPriority' in p) config.lowPriority = !!p.lowPriority;
+    if ('startHidden' in p) config.startHidden = !!p.startHidden;
+    if ('accentColor' in p && /^#[0-9a-f]{6}$/i.test(String(p.accentColor))) config.accentColor = String(p.accentColor).toLowerCase();
+    if ('memoryMode' in p && ['balanced', 'low', 'lowest'].indexOf(p.memoryMode) >= 0) config.memoryMode = p.memoryMode;
+    let moved = false;
+    if ('overlayOffsetX' in p) { config.overlayOffsetX = Math.round(clampNum(p.overlayOffsetX, -100, 100, config.overlayOffsetX)); moved = true; }
+    if ('overlayOffsetY' in p) { config.overlayOffsetY = Math.round(clampNum(p.overlayOffsetY, -100, 100, config.overlayOffsetY)); moved = true; }
+    if (moved) positionOverlay();
+    fitOverlay();
+    applyPriority();
+    saveSoon();
+    broadcastState();
+    return true;
+  });
+
+  ipcMain.handle('perf:get', () => perfSnapshot());
+
+  ipcMain.handle('games:set', (_e, p) => {
+    p = p && typeof p === 'object' ? p : {};
+    if ('gameProfiles' in p) config.gameProfiles = cleanGames(p.gameProfiles);
+    if ('autoSwitch' in p) config.autoSwitch = !!p.autoSwitch;
+    if ('autoRevert' in p) config.autoRevert = !!p.autoRevert;
+    if ('followWindow' in p) config.followWindow = !!p.followWindow;
+    if (watcher && !config.followWindow && followCenter) { followCenter = null; positionOverlay(); }
+    // Re-evaluate the current foreground app against the new rules.
+    if (watcher) { stopWatcher(); positionOverlay(); }
+    syncWatcher();
+    saveSoon();
+    broadcastState();
+    return true;
+  });
+
+  ipcMain.handle('procs:list', () => listProcesses());
+
+  ipcMain.handle('app:relaunch', () => {
+    saveNow();
+    app.relaunch();
+    app.exit(0);
+    return true;
+  });
+
+  ipcMain.handle('overlay:diag', () => alignmentDiag());
+
+  ipcMain.handle('guide:set', (_e, on) => {
+    guideOn = !!on;
+    clearTimeout(guideTimer);
+    if (guideOn) guideTimer = setTimeout(() => { guideOn = false; broadcastState(); }, 15000);
+    broadcastState();
+    return true;
+  });
+
+  ipcMain.handle('backup:export', async () => {
+    const win = editorWin && !editorWin.isDestroyed() ? editorWin : undefined;
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export EZ Reticle backup',
+      defaultPath: 'ez-reticle-backup.json',
+      filters: [{ name: 'Backup', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePath) return { ok: false };
+    try {
+      fs.writeFileSync(r.filePath, JSON.stringify({ app: 'ez-reticle', version: 1, data: config }, null, 2));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: 'Could not write that file' };
+    }
+  });
+
+  ipcMain.handle('backup:import', async () => {
+    const win = editorWin && !editorWin.isDestroyed() ? editorWin : undefined;
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Restore EZ Reticle backup',
+      properties: ['openFile'],
+      filters: [{ name: 'Backup', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePaths.length) return { ok: false };
+    try {
+      const raw = fs.readFileSync(r.filePaths[0], 'utf8');
+      if (raw.length > 30 * 1024 * 1024) return { ok: false, error: 'That file is too large' };
+      const parsed = JSON.parse(raw);
+      if (!parsed || (parsed.app !== 'ez-reticle' && parsed.app !== 'mishez-xhair') || typeof parsed.data !== 'object') return { ok: false, error: 'That is not a EZ Reticle backup' };
+      fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
+      try { fs.writeFileSync(settingsPath() + '.pre-restore', JSON.stringify(config, null, 2)); } catch (e2) { /* ignore */ }
+      fs.writeFileSync(settingsPath(), JSON.stringify(parsed.data));
+      const next = loadConfig();
+      activeProfile = null;
+      config = next;
+      heldInputs.clear();
+      if (watcher) stopWatcher();
+      registerHotkeys();
+      startTopTimer();
+      applyOverlayVisibility();
+      fitOverlay();
+      applyPriority();
+      syncHook();
+      positionOverlay();
+      syncWatcher();
+      sendTo(overlayWin, 'crosshair:changed', config.crosshair);
+      sendTo(editorWin, 'crosshair:changed', config.crosshair);
+      broadcastState();
+      saveSoon();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: 'Could not read that backup' };
+    }
   });
 
   ipcMain.handle('displays:list', () => {
@@ -395,7 +869,64 @@ function setupIpc() {
   ipcMain.handle('clipboard:read', () => clipboard.readText().slice(0, 10000));
 }
 
+// Some games grab the topmost slot; keep taking it back. "Fullscreen games" mode does this
+// more often than the simple overlay mode. Nothing runs while the overlay is hidden.
+let topTimer = null;
+function startTopTimer() {
+  clearInterval(topTimer);
+  const ms = config.displayMode === 'fullscreen' ? 500 : 5000;
+  topTimer = setInterval(() => {
+    if (config.overlayVisible && overlayWin && !overlayWin.isDestroyed()) {
+      overlayWin.setAlwaysOnTop(true, 'screen-saver');
+      overlayWin.moveTop();
+    }
+  }, ms);
+}
+
+// Runs every EZ Reticle process below normal priority so the game always wins the CPU.
+function applyPriority() {
+  const level = config.lowPriority ? os.constants.priority.PRIORITY_BELOW_NORMAL : os.constants.priority.PRIORITY_NORMAL;
+  try {
+    const pids = new Set([process.pid]);
+    app.getAppMetrics().forEach((m) => pids.add(m.pid));
+    pids.forEach((pid) => { try { os.setPriority(pid, level); } catch (e) { /* not permitted */ } });
+  } catch (e) { /* ignore */ }
+}
+
+// What the app costs while you play: everything except the editor window's own renderer.
+function perfSnapshot() {
+  const editorPid = editorWin && !editorWin.isDestroyed() ? editorWin.webContents.getOSProcessId() : -1;
+  let cpu = 0;
+  let mem = 0;
+  let count = 0;
+  app.getAppMetrics().forEach((m) => {
+    if (m.pid === editorPid) return;
+    cpu += m.cpu.percentCPUUsage;
+    mem += m.memory.workingSetSize; // KB
+    count++;
+  });
+  return {
+    cpu,
+    memMB: mem / 1024,
+    processes: count,
+    editorOpen: editorPid > 0,
+    overlaySize,
+    overlayVisible: config.overlayVisible,
+    hook: hookState
+  };
+}
+
 // ---------------------------------------------------------------- lifecycle
+// Never show a crash dialog while someone is gaming; log it instead.
+function logError(err) {
+  try {
+    fs.mkdirSync(app.getPath('userData'), { recursive: true });
+    fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), new Date().toISOString() + ' ' + (err && err.stack || err) + '\n');
+  } catch (e) { /* ignore */ }
+}
+process.on('uncaughtException', logError);
+process.on('unhandledRejection', logError);
+
 const gotLock = app.requestSingleInstanceLock();
 
 if (!gotLock) {
@@ -405,6 +936,7 @@ if (!gotLock) {
   app.on('window-all-closed', () => { /* keep running in the tray */ });
   app.on('before-quit', () => { quitting = true; });
   app.on('will-quit', () => {
+    if (watcher) { try { watcher.kill(); } catch (e) { /* ignore */ } }
     globalShortcut.unregisterAll();
     saveNow();
     if (hookMod && hookState === 'running') {
@@ -413,7 +945,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
-    app.setAppUserModelId('com.mishez.xhair');
+    app.setAppUserModelId('com.ezggco.reticle');
     config = loadConfig();
     icon32 = makeIcon(32);
     icon64 = makeIcon(64);
@@ -422,26 +954,28 @@ if (!gotLock) {
     createOverlay();
 
     tray = new Tray(icon32);
-    tray.setToolTip('Mishez Xhair');
+    tray.setToolTip('EZ Reticle');
     tray.on('click', showEditor);
     updateTrayMenu();
 
-    registerHotkey(config.hotkey);
+    registerHotkeys();
     syncHook();
 
-    if (!process.argv.includes('--hidden')) showEditor();
+    if (!process.argv.includes('--hidden') && !config.startHidden) showEditor();
 
-    const refresh = () => positionOverlay();
+    const refresh = () => { overlaySize = 0; positionOverlay(); };
     screen.on('display-added', refresh);
     screen.on('display-removed', refresh);
     screen.on('display-metrics-changed', refresh);
+    try {
+      const { powerMonitor } = require('electron');
+      powerMonitor.on('resume', () => setTimeout(refresh, 1500));
+      powerMonitor.on('unlock-screen', () => setTimeout(refresh, 500));
+    } catch (e) { /* not available */ }
+    syncWatcher();
 
-    // Some games grab the topmost slot; keep taking it back.
-    setInterval(() => {
-      if (config.overlayVisible && overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.setAlwaysOnTop(true, 'screen-saver');
-        overlayWin.moveTop();
-      }
-    }, 3000);
+    startTopTimer();
+    applyPriority();
+    setInterval(applyPriority, 60000);
   });
 }

@@ -1,8 +1,8 @@
 {
-  "name": "mishez-xhair",
-  "productName": "Mishez Xhair",
+  "name": "ez-reticle",
+  "productName": "EZ Reticle",
   "version": "1.0.0",
-  "description": "Custom crosshair overlay and aim trainer for Windows",
+  "description": "Custom crosshair overlay and designer for Windows",
   "main": "main.js",
   "private": true,
   "scripts": {
@@ -13,12 +13,12 @@
     "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
+    "electron": ">=33.2.0",
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.mishez.xhair",
-    "productName": "Mishez Xhair",
+    "appId": "com.ezggco.reticle",
+    "productName": "EZ Reticle",
     "npmRebuild": false,
     "files": [
       "main.js",
@@ -31,17 +31,25 @@
       "editor.css",
       "sharecode.js",
       "pros.js",
-      "trainer.js",
-      "package.json"
+      "package.json",
+      "presets.js",
+      "logo.png",
+      "logo-64.png"
     ],
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
-  }
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "EZ Reticle",
+      "createDesktopShortcut": true,
+      "artifactName": "EZ-Reticle-Setup-${version}.exe"
+    },
+    "icon": "build/icon.png"
+  },
+  "author": "EZGGco"
 }

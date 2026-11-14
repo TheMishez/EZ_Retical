@@ -1,4 +1,4 @@
-# Mishez Xhair – Changelog
+# EZ Reticle – Changelog
 
 Windows-first crosshair overlay built with Electron: a transparent, click-through, always-on-top overlay with a layered crosshair designer.
 
@@ -17,6 +17,9 @@ Windows-first crosshair overlay built with Electron: a transparent, click-throug
 - **Dynamic spread**: the whole crosshair grows or tightens while moving, running, shooting, jumping, aiming or reloading, with adjustable speed and curve, plus hold-to-test buttons.
 - **Color rules**: blend toward a color while an action is active (e.g. red while reloading), optionally recoloring the outline.
 - **States**: a separate crosshair design shown while Aim, Reload, Jump, Run, Move or Shoot is held.
+- **Multiple effects per layer**: stack up to 6 animations on one layer, each with its own trigger, mode, easing, strength and speed.
+- **Reactions panel**: one compact section per layer combines the animation effect (when, easing, strength, speed) with spread. Choose "Follow crosshair settings", "Custom for this layer" (own gap change while moving, running, shooting, jumping, aiming or reloading) or "Don't spread or recolor".
+- Fade out now fades to fully invisible.
 - **Layer tools**: copy/paste style, mirror left/right and up/down, per-layer flip, per-layer opt-out of dynamics.
 - Starter presets, including "Crosshair 2", colorblind-friendly sets, "Dynamic Spread" and "Reload Red".
 - Custom default crosshair on first install (green cross with dot and pulse).
