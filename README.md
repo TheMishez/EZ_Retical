@@ -1,39 +1,51 @@
-# Mishez Xhair
-
-## What's in it
-
-* **Overlay:** transparent, click-through, always-on-top window centered on the chosen display. Toggle with a global hotkey (default F8, changeable in Settings).
-* **Editor:** style (cross, X, circle, square, dot), size, gap, thickness, rotation, T-style, color, opacity, outline, center dot, offset, with a live zoomed preview.
-* **Animations:** expand, shrink, pulse or flash on click, and expand while moving (WASD). These use a global input hook, which is only started while an animation other than None is selected.
-* **Pro crosshairs:** a searchable list of about 28 CS2 pros. Each entry is a CS share code that the app decodes, converts to pixels for your game's screen height, and previews. "Use" applies it, "Save" adds it to your list. You can also paste any `CSGO-xxxxx-...` code to import it. "Edit" opens a pro in the editor; "Save to <name>" keeps your own version on that pro's card (marked "edited", with a Reset button to restore the original).
-* **Share and save:** copy/paste crosshair codes (`XH1:...`) and save named crosshairs.
-* **Aim trainer:** Gridshot, Flick, Tracking, drawn with your own crosshair, with mouse capture and sensitivity, local best scores, and a daily seed (same target sequence for everyone on a given day).
-
-## Limits
-
-* The overlay only shows over games in **borderless windowed** or windowed mode, not exclusive fullscreen.
-* It is a plain overlay window: no injection and no reading game memory. Some games, anti-cheats, or tournaments still restrict overlay crosshairs, so check their rules.
-* Leaderboards need a server and are not included. Trainer scores are stored locally.
-* The trainer's sensitivity is a simple multiplier, not matched to any game's sensitivity.
-
-## Pro crosshair notes
-
-* The list is in `pros.js`: to update a pro, replace their `code`. Codes were copied from csdb.gg (reviewed July 2026) and wecoach.gg (undated), so some may be out of date.
-* Only the older `CSGO-xxxxx-...` code format is supported. Codes starting with `CS` and no dashes are rejected with a message.
-* Size conversion assumes 1 CS unit = screen height / 600 pixels. If a crosshair looks off next to CS2, use the calibration slider.
-
-## Files
-
-|File|Purpose|
-|-|-|
-|`main.js`|App lifecycle, overlay window, tray, hotkey, input hook, settings storage|
-|`preload.js`|Safe bridge between the windows and the main process|
-|`crosshair.js`|Shared config validation, drawing and animation|
-|`overlay.html` / `overlay.js`|The click-through crosshair window|
-|`editor.html` / `editor.css` / `editor.js`|Editor, share codes, profiles, settings|
-|`sharecode.js`|CS2 share-code decoder and mapper|
-|`pros.js`|The pro crosshair list (codes and sources)|
-|`trainer.js`|Aim trainer|
-
-Settings are saved to `%APPDATA%/Mishez Xhair/settings.json`.
-
+<p align="center">
+  <img src="logo.png" alt="EZ Reticle" width="120">
+</p>
+<h1 align="center">EZ Reticle</h1>
+<p align="center">
+  A free crosshair overlay for Windows. Design your own, load pro crosshairs, and have it react to what you do in game.
+</p>
+<p align="center">
+  <img src="docs/home.png" alt="EZ Reticle home screen" width="820">
+</p>
+Features
+Overlay: a transparent, click-through, always-on-top crosshair that never takes focus from your game. Toggle it with a hotkey (F8 by default).
+Layered designer: build a crosshair from shapes, images (including GIFs), text and freehand drawing, with live preview, undo/redo, outline, glow, rounded edges and separate fill and outline opacity.
+Pro crosshairs: 99 pro player crosshairs, plus CS2 share code (`CS…`) import and export and console commands.
+Dynamics: the crosshair spreads while you move, run, shoot, jump or reload, with adjustable speed and easing curves.
+Color rules: blend toward a color while an action is active (e.g. red while reloading).
+States: a different crosshair while you hold Aim, Reload, Jump, Run, Move or Shoot.
+Animations: pulse, flash, spin, fade and more, driven by triggers you can rebind.
+Per-game crosshairs: switch automatically when a game's window is active.
+Accurate centering: handles Windows display scaling and multiple monitors, with an on-screen alignment guide and manual offsets.
+Layer tools: copy/paste style, mirror, flip, saved crosshairs, and shareable `XH1:` codes.
+Light on resources: Balanced, Low and Lowest memory modes.
+Themeable: pick your own accent color.
+<p align="center">
+  <img src="docs/designer.png" alt="EZ Reticle designer" width="820">
+</p>
+Download
+Grab the latest `EZ-Reticle-Setup-x.y.z.exe` from the Releases page and run it.
+Windows may show an "unknown publisher" warning because the app isn't code-signed yet. Choose More info → Run anyway.
+Run from source
+Requires Node.js (LTS).
+```
+npm install
+npm start
+```
+Build the installer
+```
+npm run dist
+```
+The installer is written to `dist/EZ-Reticle-Setup-<version>.exe`.
+Use in games
+Run your game in borderless windowed for the most reliable overlay. Exclusive fullscreen can hide overlays.
+Use Settings → Alignment to confirm the crosshair is exactly centered.
+The app reads global key and mouse input so dynamics, states and triggers can react. Some anti-cheat systems treat overlays and input hooks strictly, so check the rules of the game or league you play in before relying on it.
+More
+Full guide: settings, memory modes, share codes and building in detail.
+Changelog
+Contributing
+Issues and pull requests are welcome.
+License
+Add your license here (for example MIT) before publishing.
