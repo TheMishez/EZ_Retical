@@ -69,6 +69,4 @@ The installer is written to `dist/EZ-Reticle-Setup-<version>.exe`.
 
 Issues and pull requests are welcome.
 
-## License
 
-Add your license here (for example MIT) before publishing.
