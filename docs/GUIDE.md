@@ -25,7 +25,7 @@ The Windows installer is written to `dist/`. Add `build/icon.ico` (256x256) befo
 
 - **Overlay:** transparent, click-through, always-on-top window centered on the chosen display. Toggle with a global hotkey (default F8, changeable in Settings).
 - **Editor:** a library of about 45 shapes in a grouped picker (crosshairs, basic shapes, radial, gauges), size, gap, thickness, rotation, T-style, color, opacity, outline, center dot, offset, with a live zoomed preview.
-- **Animations:** expand, shrink, pulse or flash on click, and expand while moving (WASD). These use a global input hook, which is only started while an animation other than None is selected.
+- **Animations:** expand, shrink, pulse or flash on click, and expand while moving (WASD). These read clicks and keys through Windows Raw Input (a copy of each event, never in the game's input path), which is only started while an animation other than None is selected. If the native helper isn't built, the app falls back to the uiohook-napi low-level hook.
 - **Pro crosshairs:** a searchable list of about 28 CS2 pros. Each entry is a CS share code that the app decodes, converts to pixels for your game's screen height, and previews. "Use" applies it, "Save" adds it to your list. You can also paste any `CSGO-xxxxx-...` code to import it. "Edit" opens a pro in the editor; "Save to <name>" keeps your own version on that pro's card (marked "edited", with a Reset button to restore the original).
 - **Share and save:** copy/paste crosshair codes (`XH1:...`) and save named crosshairs.
 
@@ -44,7 +44,8 @@ The Windows installer is written to `dist/`. Add `build/icon.ico` (256x256) befo
 
 | File | Purpose |
 | --- | --- |
-| `main.js` | App lifecycle, overlay window, tray, hotkey, input hook, settings storage |
+| `main.js` | App lifecycle, overlay window, tray, hotkey, input listener, settings storage |
+| `native/` | Small Windows N-API helper: Raw Input for animation triggers and foreground-window events (`npm run build:native`, needs VS Build Tools) |
 | `preload.js` | Safe bridge between the windows and the main process |
 | `crosshair.js` | Shared config validation, drawing and animation |
 | `overlay.html` / `overlay.js` | The click-through crosshair window |
@@ -86,7 +87,7 @@ Each layer picks a **Trigger** (Shoot, Aim, Reload, Jump, Move, Run), an **Effec
 
 - The overlay is a tiny transparent window sized to your design (e.g. 64x64 px for the default crosshair), not a full-screen layer.
 - Idle crosshairs cost nothing: the canvas only redraws while an animation plays, capped to the **Animation frame cap** (default 60).
-- The global input hook only runs while a layer uses an animation **and** the overlay is visible.
+- The input listener only runs while a layer uses an animation **and** the overlay is visible.
 - All processes run at below-normal priority (toggle: Low CPU priority). Closing the editor fully unloads it.
 - Settings > Performance shows live CPU and memory for everything except the editor window.
 
@@ -121,7 +122,7 @@ This produces `dist/EZ-Reticle-Setup-<version>.exe` with a desktop shortcut and 
 
 - **Easing:** every animated layer has an Easing dropdown (19 curves, including overshoot, elastic and bounce). Pressing again mid-animation continues from the current value instead of snapping.
 - **GIF layers:** add an Image layer and pick a `.gif` (or animated `.webp`). Frames play on a clock; the file must stay under about 480 KB and at most 90 frames are used. Static images work as before.
-- **Per-game crosshairs (Settings, Windows):** add a game's process name (e.g. `cs2`, use *Pick from running apps*) and choose a saved crosshair. It switches when that game is in front and, optionally, goes back afterwards. A small hidden PowerShell process watches the active window (once per second, only while this feature is on).
+- **Per-game crosshairs (Settings, Windows):** add a game's process name (e.g. `cs2`, use *Pick from running apps*) and choose a saved crosshair. It switches when that game is in front and, optionally, goes back afterwards. The native helper gets a Windows event when the active window changes (plus a cheap 500 ms position check for "follow game window"), only while this feature is on. Without the helper it falls back to a hidden PowerShell process that checks once per second.
 - **Centre on the game window:** for windowed games, the overlay centres on the game's client area instead of the display.
 - **Alignment:** the overlay is centred on the exact middle physical pixel (handles 125%/150% scaling, mixed-DPI monitors, sleep/unlock and monitor changes). Settings shows the measured centre error, has an X/Y pixel offset, and a 15 s guide (magenta lines through the exact centre with cyan ticks every 10 px).
 

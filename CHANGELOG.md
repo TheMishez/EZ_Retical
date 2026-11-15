@@ -2,6 +2,13 @@
 
 Windows-first crosshair overlay built with Electron: a transparent, click-through, always-on-top overlay with a layered crosshair designer.
 
+## v1.3.0: Lighter input, game detection and idle CPU
+- **Click/key animations no longer use a low-level input hook.** A small native helper reads clicks and keys through Windows Raw Input, which gets a copy of each event after Windows has already delivered it to the game. Nothing waits on EZ Reticle, so it cannot add input lag, even when the PC is under load. Mouse movement is dropped inside the helper; only button and key changes reach the app.
+- **Per-game profiles and "follow game window" no longer start PowerShell.** The same helper is told by Windows when the active window changes, saving the ~50–100 MB PowerShell process and reacting instantly instead of up to a second later.
+- **Efficiency mode while idle**: with a static crosshair and the editor closed, EZ Reticle runs in Windows Efficiency mode (idle priority + EcoQoS), like Task Manager's toggle. Animations and the open editor keep normal low-priority scheduling.
+- **Fix**: with "Only show the crosshair while a game is in front", the crosshair no longer reappears a few seconds after being hidden.
+- Both fall back to the old uiohook / PowerShell paths if the helper isn't built. When the uiohook fallback is active, the main process keeps normal priority so the hook is never starved.
+
 ## v1.2.0: Hotkeys, startup and updates
 - **Saved crosshair hotkeys** in Settings > Hotkeys: give every saved crosshair its own key to swap mid-match, next to Show/hide, Next and Previous.
 - **Startup** card: Start with Windows, Start minimized to the tray, and the new **Only show the crosshair while a game is in front**. With all three on, EZ Reticle waits in the tray and the crosshair appears when your game is focused.

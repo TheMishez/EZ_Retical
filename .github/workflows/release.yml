@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # windows-2022: node-gyp does not recognise the VS "18" install on windows-latest yet.
+    runs-on: windows-2022
     env:
       # Code signing turns on by itself once the SIGNPATH_API_TOKEN secret exists (see docs/SIGNING.md).
       SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
@@ -21,6 +22,9 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      # Native helper (Raw Input + foreground watcher). Fail the release if it doesn't build,
+      # so installers never silently ship with only the fallbacks.
+      - run: node tools/build-native.js --strict
 
       # 1. Build the program folder (not the installer yet).
       - run: npx electron-builder --win --dir --publish never
