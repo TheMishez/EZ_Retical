@@ -34,7 +34,8 @@
       "package.json",
       "presets.js",
       "logo.png",
-      "logo-64.png"
+      "logo-64.png",
+      "previews/**"
     ],
     "win": {
       "target": [

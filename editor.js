@@ -1646,7 +1646,7 @@
   // ---- 1:1 in-game preview: real size (times the overlay scale) over game-like backgrounds or your screenshot.
   const BG_KEY = 'mishez.previewBg';
   const BGI_KEY = 'ezr.previewBgIndex';
-  const BGS = [['dust', 'Dust · daylight'], ['night', 'Night'], ['grass', 'Grass'], ['sky', 'Sky'], ['dark', 'Dark'], ['light', 'Light']];
+  const BGS = [['cs2', 'CS2'], ['deadlock', 'Deadlock'], ['grass', 'Grass'], ['sky', 'Sky'], ['dark', 'Dark'], ['light', 'Light']];
   let realCtl = null;
   let photoBg = '';
   let bgIndex = 0;
