@@ -27,5 +27,3 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.exe
-          name: EZ Reticle ${{ github.ref_name }}
-          body_path: docs/release-notes/${{ github.ref_name }}.md
