@@ -21,6 +21,9 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      # Native helper (Raw Input + foreground watcher). Fail the release if it doesn't build,
+      # so installers never silently ship with only the fallbacks.
+      - run: node tools/build-native.js --strict
 
       # 1. Build the program folder (not the installer yet).
       - run: npx electron-builder --win --dir --publish never

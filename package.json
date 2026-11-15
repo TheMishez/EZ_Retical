@@ -7,7 +7,9 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "postinstall": "node tools/build-native.js",
+    "build:native": "node tools/build-native.js"
   },
   "dependencies": {
     "uiohook-napi": "^1.5.4",
@@ -15,7 +17,8 @@
   },
   "devDependencies": {
     "electron": ">=33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "node-gyp": "^11.0.0"
   },
   "build": {
     "appId": "com.ezggco.reticle",
@@ -34,9 +37,14 @@
       "pros.js",
       "package.json",
       "presets.js",
+      "native/index.js",
+      "native/build/Release/ez_native.node",
       "logo.png",
       "logo-64.png",
       "previews/**"
+    ],
+    "asarUnpack": [
+      "native/build/Release/*.node"
     ],
     "win": {
       "target": [

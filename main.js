@@ -9,6 +9,9 @@ const fs = require('fs');
 const os = require('os');
 const { spawn, execFile } = require('child_process');
 const Crosshair = require('./crosshair.js');
+// Native helper: Raw Input for animation triggers + foreground-window events (Windows).
+// Falls back to uiohook-napi / PowerShell when the binary isn't built.
+const Native = require('./native/index.js');
 
 // The overlay is a tiny transparent click-through window sized to the crosshair (not full screen),
 // so the compositor only ever handles a few thousand pixels.
@@ -63,10 +66,11 @@ let revertDesign = null; // what to go back to when leaving the game
 let revertProfile = null;
 let lastGame = '';
 
-// Global input hook (only started when a click/key animation is selected)
+// Global input listener (only started when a click/key animation is selected)
 let hookMod = null;
 let hookWired = false;
 let hookState = 'off'; // 'off' | 'running' | 'unavailable'
+let hookKind = null; // 'native' (Raw Input, not in the input chain) | 'uiohook' (low-level hook fallback)
 const heldInputs = new Set(); // canonical names of inputs currently held
 
 // ---------------------------------------------------------------- icons
@@ -219,6 +223,8 @@ function publicState() {
     profileHotkeys: config.profileHotkeys,
     activeProfile,
     hookState,
+    inputMode: hookKind,
+    watcherMode: watcher ? (watcher.kind === 'native' ? 'native' : 'powershell') : null,
     isPackaged: app.isPackaged
   };
 }
@@ -619,6 +625,14 @@ function syncWatcher() {
 
 function startWatcher() {
   const own = path.basename(process.execPath, '.exe').toLowerCase();
+  // Preferred: Windows tells the native helper when the active window changes (no extra process).
+  if (Native.available) {
+    const w = { kind: 'native', kill: () => Native.stopForeground() };
+    let ok = false;
+    try { ok = Native.startForeground((line) => { if (watcher === w) onForeground(line, own); }); } catch (e) { logError(e); }
+    if (ok) { watcher = w; return; }
+  }
+  // Fallback: a hidden PowerShell process that polls once a second.
   const enc = Buffer.from(WATCH_SCRIPT, 'utf16le').toString('base64');
   let child;
   try {
@@ -702,52 +716,86 @@ function forwardInput(evt) {
   if (editorWin && !editorWin.isDestroyed() && editorWin.isVisible()) sendTo(editorWin, 'input', evt);
 }
 
-// Starts the hook only while a click/key animation is selected, and stops it otherwise.
+// A trigger input (canonical name such as "Mouse1", "R", "Space") went down or up.
+function pressInput(name, down) {
+  if (!name) return;
+  const actions = Crosshair.actionsFor(config.triggers, name);
+  const active = (action) => config.triggers[action].some((n) => heldInputs.has(n));
+  if (down) {
+    if (heldInputs.has(name)) return; // key auto-repeat
+    const was = actions.map(active);
+    heldInputs.add(name);
+    actions.forEach((action, i) => { if (!was[i]) forwardInput({ type: 'trigger', action, down: true }); });
+  } else {
+    if (!heldInputs.delete(name)) return;
+    actions.forEach((action) => { if (!active(action)) forwardInput({ type: 'trigger', action, down: false }); });
+  }
+}
+
+// Preferred: Raw Input through the native helper. It receives a copy of each click/key after
+// Windows has delivered it, so it never sits in the game's input path.
+function startNativeInput() {
+  if (!Native.available) return false;
+  try {
+    return !!Native.startInput((code, down) => pressInput(Crosshair.canonKey(code), down));
+  } catch (e) {
+    logError(e);
+    return false;
+  }
+}
+
+// Fallback: uiohook-napi's low-level hook (only used when the native helper isn't built).
+function startUiohook() {
+  if (!hookMod) hookMod = require('uiohook-napi');
+  const { uIOhook, UiohookKey } = hookMod;
+  if (!hookWired) {
+    const keyNames = new Map();
+    Object.keys(UiohookKey).forEach((k) => {
+      if (typeof UiohookKey[k] === 'number') keyNames.set(UiohookKey[k], Crosshair.canonKey(k));
+    });
+    uIOhook.on('mousedown', (e) => pressInput('Mouse' + e.button, true));
+    uIOhook.on('mouseup', (e) => pressInput('Mouse' + e.button, false));
+    uIOhook.on('keydown', (e) => pressInput(keyNames.get(e.keycode), true));
+    uIOhook.on('keyup', (e) => pressInput(keyNames.get(e.keycode), false));
+    hookWired = true;
+  }
+  uIOhook.start();
+}
+
+function stopInputListener() {
+  if (hookKind === 'native') {
+    try { Native.stopInput(); } catch (e) { /* ignore */ }
+  } else if (hookKind === 'uiohook') {
+    try { hookMod.uIOhook.stop(); } catch (e) { /* ignore */ }
+  }
+  hookKind = null;
+}
+
+// Starts listening only while a click/key animation is selected, and stops otherwise.
 function syncHook() {
   const editorOpen = !!(editorWin && !editorWin.isDestroyed() && editorWin.isVisible() && !editorWin.isMinimized());
   const want = Crosshair.hasAnimation(config.crosshair) && (config.overlayVisible || editorOpen);
   const before = hookState;
   if (want && hookState === 'off') {
-    try {
-      if (!hookMod) hookMod = require('uiohook-napi');
-      const { uIOhook, UiohookKey } = hookMod;
-      if (!hookWired) {
-        const keyNames = new Map();
-        Object.keys(UiohookKey).forEach((k) => {
-          if (typeof UiohookKey[k] === 'number') keyNames.set(UiohookKey[k], Crosshair.canonKey(k));
-        });
-        const press = (name, down) => {
-          if (!name) return;
-          const actions = Crosshair.actionsFor(config.triggers, name);
-          const active = (action) => config.triggers[action].some((n) => heldInputs.has(n));
-          if (down) {
-            if (heldInputs.has(name)) return; // key auto-repeat
-            const was = actions.map(active);
-            heldInputs.add(name);
-            actions.forEach((action, i) => { if (!was[i]) forwardInput({ type: 'trigger', action, down: true }); });
-          } else {
-            if (!heldInputs.delete(name)) return;
-            actions.forEach((action) => { if (!active(action)) forwardInput({ type: 'trigger', action, down: false }); });
-          }
-        };
-        uIOhook.on('mousedown', (e) => press('Mouse' + e.button, true));
-        uIOhook.on('mouseup', (e) => press('Mouse' + e.button, false));
-        uIOhook.on('keydown', (e) => press(keyNames.get(e.keycode), true));
-        uIOhook.on('keyup', (e) => press(keyNames.get(e.keycode), false));
-        hookWired = true;
-      }
-      uIOhook.start();
+    if (startNativeInput()) {
+      hookKind = 'native';
       hookState = 'running';
-    } catch (e) {
-      console.warn('Global input hook unavailable:', e.message);
-      hookState = 'unavailable';
+    } else {
+      try {
+        startUiohook();
+        hookKind = 'uiohook';
+        hookState = 'running';
+      } catch (e) {
+        console.warn('Global input hook unavailable:', e.message);
+        hookState = 'unavailable';
+      }
     }
   } else if (!want && hookState === 'running') {
-    try { hookMod.uIOhook.stop(); } catch (e) { /* ignore */ }
+    stopInputListener();
     hookState = 'off';
     heldInputs.clear();
   }
-  if (hookState !== before) broadcastState();
+  if (hookState !== before) { applyPriority(); broadcastState(); }
 }
 
 // ---------------------------------------------------------------- IPC
@@ -1006,7 +1054,12 @@ function applyPriority() {
   try {
     const pids = new Set([process.pid]);
     app.getAppMetrics().forEach((m) => pids.add(m.pid));
-    pids.forEach((pid) => { try { os.setPriority(pid, level); } catch (e) { /* not permitted */ } });
+    pids.forEach((pid) => {
+      // The uiohook fallback runs its low-level hook in this process; Windows waits on that hook
+      // for every mouse/key event, so it must not be starved by the game.
+      const lvl = pid === process.pid && hookKind === 'uiohook' ? os.constants.priority.PRIORITY_NORMAL : level;
+      try { os.setPriority(pid, lvl); } catch (e) { /* not permitted */ }
+    });
   } catch (e) { /* ignore */ }
 }
 
@@ -1165,9 +1218,7 @@ if (!gotLock) {
     if (watcher) { try { watcher.kill(); } catch (e) { /* ignore */ } }
     globalShortcut.unregisterAll();
     saveNow();
-    if (hookMod && hookState === 'running') {
-      try { hookMod.uIOhook.stop(); } catch (e) { /* ignore */ }
-    }
+    if (hookState === 'running') stopInputListener();
   });
 
   app.whenReady().then(() => {
