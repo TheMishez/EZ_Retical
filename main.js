@@ -1041,7 +1041,9 @@ function startTopTimer() {
   clearInterval(topTimer);
   const ms = config.displayMode === 'fullscreen' ? 500 : 5000;
   topTimer = setInterval(() => {
-    if (config.overlayVisible && overlayWin && !overlayWin.isDestroyed()) {
+    // Only while actually shown: on Windows, setAlwaysOnTop on a hidden window shows it again,
+    // which brought the crosshair back a few seconds after "only while a game is in front" hid it.
+    if (config.overlayVisible && overlayWin && !overlayWin.isDestroyed() && overlayWin.isVisible()) {
       overlayWin.setAlwaysOnTop(true, 'screen-saver');
       overlayWin.moveTop();
     }
