@@ -41,6 +41,7 @@
   let pushTimer = 0;
   const rows = {};
   const extrasUI = { host: null };
+  const multi = new Set();
 
   const TRIG_OPTS = Crosshair.TRIGGER_IDS.map((id) => [id, Crosshair.TRIGGER_LABELS[id]]);
   const ANIM_OPTS = Crosshair.ANIMS.map((id) => [id, Crosshair.ANIM_LABELS[id]]);
@@ -50,75 +51,62 @@
 
   // kinds: which layer types show the group/row; when: extra condition on the layer.
   const SCHEMA = [
-    { title: 'Shape', kinds: ['shape'], items: [
+    { title: 'Shape', icon: 'M12 3v6M12 15v6M3 12h6M15 12h6', kinds: ['shape'], items: [
       { key: 'style', type: 'shape', label: 'Shape' },
       { key: 'size', type: 'range', label: 'Size', min: 0, max: 60, step: 0.1, unit: 'px' },
       { key: 'gap', type: 'range', label: 'Gap', min: 0, max: 40, step: 0.1, unit: 'px' },
       { key: 'thickness', type: 'range', label: 'Thickness', min: 1, max: 12, step: 0.1, unit: 'px' },
+      { key: 'rounded', type: 'range', label: 'Corner radius', min: 0, max: 100, step: 5, unit: '%' },
       { key: 'tStyle', type: 'check', label: 'T-style (no top line)' },
-      { key: 'rounded', type: 'range', label: 'Rounded edges', min: 0, max: 100, step: 5, unit: '%' }
+      { key: 'dot', type: 'check', label: 'Center dot' },
+      { key: 'dotSize', type: 'range', label: 'Dot size', min: 1, max: 12, step: 1, unit: 'px', when: (l) => l.dot }
     ] },
-    { title: 'Image', kinds: ['image'], items: [
+    { title: 'Image', icon: 'M4 5h16v14H4zM8 14l3-3 5 5', kinds: ['image'], items: [
       { type: 'action', label: 'Image', text: 'Replace image…', fn: () => pickImage((img) => { cur().imgAspect = Math.min(20, Math.max(0.05, img.aspect)); update('src', img.src); }) },
       { key: 'imgSize', type: 'range', label: 'Size', min: 4, max: 400, step: 1, unit: 'px' },
       { key: 'tint', type: 'check', label: 'Tint with color' }
     ] },
-    { title: 'Text', kinds: ['text'], items: [
+    { title: 'Text', icon: 'M5 6V4h14v2M12 4v16M9 20h6', kinds: ['text'], items: [
       { key: 'text', type: 'text', label: 'Text' },
       { key: 'font', type: 'select', label: 'Font', options: FONT_OPTS },
       { key: 'fontSize', type: 'range', label: 'Font size', min: 6, max: 200, step: 1, unit: 'px' },
       { key: 'bold', type: 'check', label: 'Bold' }
     ] },
-    { title: 'Drawing', kinds: ['draw'], items: [
+    { title: 'Drawing', icon: 'M4 20l4-1L19 8l-3-3L5 16zM14 7l3 3', kinds: ['draw'], items: [
       { type: 'drawtools', label: 'Tools' },
       { key: 'brush', type: 'range', label: 'Brush size', min: 1, max: 24, step: 1, unit: 'px' }
     ] },
-    { title: 'Transform', items: [
+    { title: 'Color & outline', icon: 'M12 3a9 9 0 1 0 0 18c1 0 2-1 1-2-1-2 0-3 2-3h3a3 3 0 0 0 3-3 9 9 0 0 0-9-10z', items: [
+      { key: 'color', type: 'color', label: 'Color', swatches: ['#fcc800', '#00ff66', '#00e5ff', '#ff2bd6', '#ff3b3b', '#ffffff'], when: (l) => l.kind !== 'image' || l.tint },
+      { key: 'opacity', type: 'range', label: 'Opacity', min: 0.1, max: 1, step: 0.05, pct: true },
+      { key: 'outline', type: 'check', label: 'Outline', kinds: ['shape', 'text', 'draw'] },
+      { key: 'outlineColor', type: 'color', label: 'Outline color', kinds: ['shape', 'text', 'draw'], when: (l) => l.outline },
+      { key: 'outlineThickness', type: 'range', label: 'Outline width', min: 0, max: 6, step: 1, unit: 'px', kinds: ['shape', 'text', 'draw'], when: (l) => l.outline },
+      { key: 'outlineOpacity', type: 'range', label: 'Outline opacity', min: 0, max: 1, step: 0.05, pct: true, kinds: ['shape', 'text', 'draw'], when: (l) => l.outline }
+    ] },
+    { title: 'Transform', icon: 'M12 2v20M2 12h20M7 7l-3 5 3 5M17 7l3 5-3 5', items: [
+      { key: 'offsetX', type: 'range', label: 'X', min: -250, max: 250, step: 1, unit: 'px' },
+      { key: 'offsetY', type: 'range', label: 'Y', min: -250, max: 250, step: 1, unit: 'px' },
       { key: 'rotation', type: 'range', label: 'Rotation', min: 0, max: 359, step: 1, unit: '°' },
       { key: 'flipX', type: 'check', label: 'Flip left/right' },
-      { key: 'flipY', type: 'check', label: 'Flip up/down' },
-      { key: 'offsetX', type: 'range', label: 'Offset X', min: -250, max: 250, step: 1, unit: 'px' },
-      { key: 'offsetY', type: 'range', label: 'Offset Y', min: -250, max: 250, step: 1, unit: 'px' }
+      { key: 'flipY', type: 'check', label: 'Flip up/down' }
     ] },
-    { title: 'Color', items: [
-      { key: 'color', type: 'color', label: 'Color', swatches: ['#00ff66', '#00e5ff', '#ffee00', '#ff2bd6', '#ff3b3b', '#ffffff'], when: (l) => l.kind !== 'image' || l.tint },
-      { key: 'opacity', type: 'range', label: 'Crosshair opacity', min: 0.1, max: 1, step: 0.05, pct: true }
-    ] },
-    { title: 'Outline', kinds: ['shape', 'text', 'draw'], items: [
-      { key: 'outline', type: 'check', label: 'Outline' },
-      { key: 'outlineColor', type: 'color', label: 'Outline color' },
-      { key: 'outlineOpacity', type: 'range', label: 'Outline opacity', min: 0, max: 1, step: 0.05, pct: true },
-      { key: 'outlineThickness', type: 'range', label: 'Outline width', min: 0, max: 6, step: 1, unit: 'px' }
-    ] },
-    { title: 'Center dot', kinds: ['shape'], items: [
-      { key: 'dot', type: 'check', label: 'Center dot' },
-      { key: 'dotSize', type: 'range', label: 'Dot size', min: 1, max: 12, step: 1, unit: 'px' }
-    ] },
-    { title: 'Effects', items: [
+    { title: 'Effects', icon: 'M12 2l2.5 6.5L21 9l-5 4.5 1.5 6.5L12 16.5 6.5 20 8 13.5 3 9l6.5-.5z', items: [
       { key: 'glow', type: 'range', label: 'Glow', min: 0, max: 30, step: 1, unit: 'px' },
-      { key: 'blur', type: 'range', label: 'Blur', min: 0, max: 10, step: 1, unit: 'px' }
-    ] },
-    { title: 'Reactions', items: [
-      { type: 'hint', text: 'Stack as many effects as you like: each has its own trigger.' },
-      { key: 'animation', type: 'select', label: 'Effect', options: ANIM_OPTS },
-      { type: 'pair', label: 'When', items: [
-        { key: 'animTrigger', options: TRIG_OPTS },
-        { key: 'animMode', options: [['pulse', 'Pulse on press'], ['hold', 'Hold while pressed']] }
-      ], when: animOn },
-      { key: 'animEase', type: 'select', label: 'Easing', options: Crosshair.EASES.map((id) => [id, Crosshair.EASE_LABELS[id]]), when: animOn },
-      { key: 'animIntensity', type: 'range', label: 'Strength', min: 0, max: 30, step: 1, when: (l) => animOn(l) && ['fade', 'hide', 'show'].indexOf(l.animation) < 0 },
-      { key: 'animDuration', type: 'range', label: 'Speed', min: 40, max: 600, step: 10, unit: 'ms', when: animOn },
-      { type: 'extras', when: () => true },
+      { key: 'blur', type: 'range', label: 'Blur', min: 0, max: 10, step: 1, unit: 'px' },
       { key: 'reactMode', type: 'select', label: 'Spread', options: [
         ['follow', 'Follow crosshair settings'], ['custom', 'Custom for this layer'], ['off', 'Don\u2019t spread or recolor']
       ] },
       { type: 'grid', title: 'Gap change (px) while…', cells: [
         ['dynMove', 'Moving'], ['dynRun', 'Running'], ['dynShoot', 'Shooting'],
         ['dynJump', 'Jumping'], ['dynAim', 'Aiming'], ['dynReload', 'Reloading']
-      ], when: (l) => l.dynOwn },
-      { type: 'hint', text: 'Positive spreads the layer out, negative pulls it in.', when: (l) => l.dynOwn }
+      ], when: (l) => l.dynOwn }
     ] }
   ];
+  // Keys that make sense on every kind of layer, so they can be set on a whole multi-selection.
+  const SHARED_KEYS = {};
+  SCHEMA.forEach((g) => { if (!g.kinds) g.items.forEach((it) => { if (it.key && !it.kinds) SHARED_KEYS[it.key] = true; if (it.cells) it.cells.forEach((c) => { SHARED_KEYS[c[0]] = true; }); }); });
+  const ANIM_FIELDS = ['animation', 'animTrigger', 'animMode', 'animEase', 'animIntensity', 'animDuration'];
 
   // ---------------------------------------------------------------- helpers
   function toast(msg) {
@@ -152,11 +140,30 @@
     return m;
   }
 
+  // ---- canvas zoom: "Fit" follows the design; −/+/wheel switch to a fixed zoom until Fit is pressed.
+  let fitMode = true;
+  let viewZoom = 2;
+  const ZMIN = 0.25, ZMAX = 16;
+  function fitZoom() {
+    const st = $('#stage');
+    const m = st ? Math.min(st.clientWidth, st.clientHeight) : 340;
+    return Math.max(ZMIN, Math.min(6, ((m || 340) * 0.26) / designExtent(design)));
+  }
+
   function updateZoom() {
-    const zoom = Math.max(0.5, Math.min(4, 150 / designExtent(design)));
-    previewZoom = zoom;
-    preview.setZoom(zoom);
-    $('#zoomLabel').textContent = 'Zoom ×' + zoom.toFixed(1);
+    if (fitMode) viewZoom = fitZoom();
+    previewZoom = viewZoom;
+    preview.setZoom(viewZoom);
+    $('#zoomLabel').textContent = Math.round(viewZoom * 100) + '%';
+    $('#zoomFit').classList.toggle('on', fitMode);
+    $('#stage').style.setProperty('--gz', (Math.max(4, viewZoom * (viewZoom >= 4 ? 1 : 5))) + 'px');
+    refreshSel();
+  }
+
+  function setZoom(z) {
+    fitMode = false;
+    viewZoom = Math.max(ZMIN, Math.min(ZMAX, z));
+    updateZoom();
   }
 
   // ---- undo / redo
@@ -181,6 +188,7 @@
       hi = hist.length - 1;
     }
     updateUndoButtons();
+    markDirty();
   }
 
   function commitSoon() {
@@ -194,6 +202,7 @@
     hi = i;
     design = viewOf(Crosshair.sanitizeDesign(o.d), o.es || 'base');
     sel = Math.max(0, Math.min(design.layers.length - 1, o.sel | 0));
+    multi.clear();
     syncStates();
     renderLayers();
     applyToControls();
@@ -212,84 +221,145 @@
   }
 
   function refreshAll() {
+    markDirty();
     preview.setConfig(design);
     if (homePrev) homePrev.setConfig(canon());
     updateZoom();
     api.setCrosshair(canon());
   }
 
+  // Indices of every selected layer (the inspector shows `sel`; Shift/Ctrl-click adds more).
+  function selected() {
+    const out = [sel];
+    multi.forEach((i) => { if (i !== sel && i >= 0 && i < design.layers.length) out.push(i); });
+    return out.sort((a, b) => a - b);
+  }
+
   function update(key, val) {
+    const L = cur();
+    const targets = selected().filter((i) => SHARED_KEYS[key] || key === 'reactMode' || design.layers[i].kind === L.kind);
     if (key === 'reactMode') {
-      const l = cur();
-      l.dynOwn = val === 'custom';
-      l.dynamic = val !== 'off';
+      targets.forEach((i) => {
+        const l = design.layers[i];
+        l.dynOwn = val === 'custom';
+        l.dynamic = val !== 'off';
+      });
       refreshVisibility();
       preview.setConfig(design);
-      updateZoom();
-      pushSoon();
-      commitSoon();
+      afterEdit();
       return;
     }
-    cur()[key] = val;
-    if (key === 'animTrigger') {
-      cur().animMode = HOLD_DEFAULT[val] || 'pulse';
-      rows.animMode.set(cur().animMode);
+    if ((key === 'offsetX' || key === 'offsetY' || key === 'rotation') && targets.length > 1) {
+      // Several layers: move/rotate them together by the change instead of stacking them on one value.
+      const dv = val - L[key];
+      targets.forEach((i) => {
+        const l = design.layers[i];
+        l[key] = key === 'rotation' ? ((((l[key] + dv) % 360) + 360) % 360) : Math.max(-250, Math.min(250, l[key] + dv));
+      });
+    } else {
+      targets.forEach((i) => { design.layers[i][key] = val; });
     }
-    if (key === 'tint' || key === 'animation') refreshVisibility();
+    if (key === 'tint' || key === 'outline' || key === 'dot') refreshVisibility();
     if (key === 'src') renderLayers();
     preview.setConfig(design);
-    updateZoom();
-    drawLayerThumb(sel);
-    pushSoon();
-    commitSoon();
+    targets.forEach((i) => drawLayerThumb(i));
+    afterEdit();
   }
 
+  // Shared tail of every edit: zoom/selection box, live overlay, undo, real-size preview.
+  function afterEdit() {
+    updateZoom();
+    pushSoon();
+    commitSoon();
+    markDirty();
+  }
 
-  // Extra animations: every layer can stack more effects on top of its first one.
-  function extrasChanged() {
+  // ---- animations (bottom strip). The first effect lives on the layer itself, extras in layer.anims.
+  const ANIM_DEFAULT = { animation: 'expand', animTrigger: 'shoot', animMode: 'pulse', animEase: 'easeOut', animIntensity: 6, animDuration: 150 };
+  const FADE_LIKE = ['fade', 'hide', 'show'];
+
+  function animSlots(l) {
+    const out = [];
+    if (l.animation && l.animation !== 'none') out.push({ obj: l, own: true });
+    (l.anims || []).forEach((a, i) => out.push({ obj: a, idx: i }));
+    return out;
+  }
+
+  function addAnim() {
+    const l = cur();
+    const d = Object.assign({}, ANIM_DEFAULT);
+    if (Crosshair.EASES.indexOf(d.animEase) < 0) d.animEase = Crosshair.EASES[0];
+    if (!l.animation || l.animation === 'none') {
+      ANIM_FIELDS.forEach((k) => { l[k] = d[k]; });
+    } else {
+      const list = l.anims || (l.anims = []);
+      if (list.length >= Crosshair.MAX_EXTRA_ANIMS) { toast('Up to ' + (Crosshair.MAX_EXTRA_ANIMS + 1) + ' animations per layer'); return; }
+      list.push(d);
+    }
+    animsChanged(true);
+  }
+
+  function removeAnim(slot) {
+    const l = cur();
+    if (slot.own) {
+      if (l.anims && l.anims.length) {
+        const next = l.anims.shift();
+        ANIM_FIELDS.forEach((k) => { l[k] = next[k]; });
+      } else {
+        l.animation = 'none';
+      }
+    } else {
+      l.anims.splice(slot.idx, 1);
+    }
+    if (l.anims && !l.anims.length) delete l.anims;
+    animsChanged(true);
+  }
+
+  function animsChanged(rebuild) {
+    if (rebuild) renderAnimCards();
     preview.setConfig(design);
-    updateZoom();
     drawLayerThumb(sel);
-    pushSoon();
-    commitSoon();
+    renderLayersSoon();
+    afterEdit();
   }
 
-  function renderExtras() {
-    const host = extrasUI.host;
+  function easeCurve(id) {
+    let d = '';
+    for (let i = 0; i <= 24; i++) {
+      const t = i / 24;
+      const y = 1 - Math.max(-0.2, Math.min(1.2, Crosshair.ease(id, t)));
+      d += (i ? 'L' : 'M') + (t * 100).toFixed(1) + ' ' + (4 + y * 22).toFixed(1);
+    }
+    return '<svg viewBox="0 0 100 30" preserveAspectRatio="none"><path d="' + d + '"/></svg>';
+  }
+
+  function renderAnimCards() {
+    const host = $('#animCards');
     if (!host) return;
     host.textContent = '';
     const l = cur();
-    const list = l.anims || (l.anims = []);
-    list.forEach((a, i) => {
-      const card = mk('div', { className: 'xcard' });
-      const head = mk('div', { className: 'xhead' });
-      head.appendChild(mk('span', { textContent: 'Effect ' + (i + 2) }));
-      const del = mk('button', { type: 'button', textContent: '\u2715', title: 'Remove this effect' });
-      del.addEventListener('click', () => { list.splice(i, 1); if (!list.length) delete l.anims; renderExtras(); extrasChanged(); });
+    const slots = animSlots(l);
+    slots.forEach((slot) => {
+      const a = slot.obj;
+      const card = mk('div', { className: 'dz-acard' });
+      const head = mk('div', { className: 'dz-ah' });
+      const eff = mk('select', { className: 'dz-aeff', title: 'Effect' });
+      ANIM_OPTS.filter((o) => o[0] !== 'none').forEach((o) => eff.appendChild(mk('option', { value: o[0], textContent: o[1], selected: o[0] === a.animation })));
+      eff.addEventListener('change', () => { a.animation = eff.value; animsChanged(true); });
+      const del = mk('button', { type: 'button', className: 'dz-ib xs', title: 'Remove this animation', innerHTML: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>' });
+      del.addEventListener('click', () => removeAnim(slot));
+      head.appendChild(eff);
       head.appendChild(del);
       card.appendChild(head);
-      const sel1 = mk('select');
-      ANIM_OPTS.filter((o) => o[0] !== 'none').forEach((o) => sel1.appendChild(mk('option', { value: o[0], textContent: o[1], selected: o[0] === a.animation })));
-      sel1.addEventListener('change', () => { a.animation = sel1.value; renderExtras(); extrasChanged(); });
-      const row1 = mk('div', { className: 'xrow' });
-      row1.appendChild(sel1);
-      card.appendChild(row1);
-      const tsel = mk('select');
-      TRIG_OPTS.forEach((o) => tsel.appendChild(mk('option', { value: o[0], textContent: o[1], selected: o[0] === a.animTrigger })));
-      const msel = mk('select');
-      [['pulse', 'Pulse on press'], ['hold', 'Hold while pressed']].forEach((o) => msel.appendChild(mk('option', { value: o[0], textContent: o[1], selected: o[0] === a.animMode })));
-      tsel.addEventListener('change', () => { a.animTrigger = tsel.value; a.animMode = HOLD_DEFAULT[tsel.value] || 'pulse'; msel.value = a.animMode; extrasChanged(); });
-      msel.addEventListener('change', () => { a.animMode = msel.value; extrasChanged(); });
-      const row2 = mk('div', { className: 'xrow' });
-      row2.appendChild(tsel);
-      row2.appendChild(msel);
-      card.appendChild(row2);
-      const esel = mk('select');
-      Crosshair.EASES.forEach((id) => esel.appendChild(mk('option', { value: id, textContent: Crosshair.EASE_LABELS[id], selected: id === a.animEase })));
-      esel.addEventListener('change', () => { a.animEase = esel.value; extrasChanged(); });
-      const mkNum = (key, min, max, step, label) => {
-        const w = mk('label', { className: 'xnum' });
-        w.appendChild(mk('span', { textContent: label }));
+      const grid = mk('div', { className: 'dz-ag' });
+      const field = (label, el) => { const w = mk('label'); w.appendChild(mk('span', { textContent: label })); w.appendChild(el); grid.appendChild(w); };
+      const selOf = (opts, key, after) => {
+        const x = mk('select');
+        opts.forEach((o) => x.appendChild(mk('option', { value: o[0], textContent: o[1], selected: o[0] === a[key] })));
+        x.addEventListener('change', () => { a[key] = x.value; if (after) after(); animsChanged(!!after); });
+        return x;
+      };
+      const numOf = (key, min, max, step) => {
         const n = mk('input', { type: 'number', className: 'num', min: min, max: max, step: step, value: a[key] });
         const commit = () => {
           let v = Number(n.value);
@@ -297,30 +367,39 @@
           v = Math.max(min, Math.min(max, v));
           n.value = v;
           a[key] = v;
-          extrasChanged();
+          animsChanged(false);
         };
         n.addEventListener('change', commit);
         n.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); e.stopPropagation(); });
-        w.appendChild(n);
-        return w;
+        return n;
       };
-      const row3 = mk('div', { className: 'xrow' });
-      row3.appendChild(esel);
-      card.appendChild(row3);
-      const row4 = mk('div', { className: 'xrow' });
-      if (['fade', 'hide', 'show'].indexOf(a.animation) < 0) row4.appendChild(mkNum('animIntensity', 0, 30, 1, 'Strength'));
-      row4.appendChild(mkNum('animDuration', 40, 600, 10, 'Speed (ms)'));
-      card.appendChild(row4);
+      field('When', selOf(TRIG_OPTS, 'animTrigger', () => { a.animMode = HOLD_DEFAULT[a.animTrigger] || 'pulse'; }));
+      field('Mode', selOf([['pulse', 'Pulse'], ['hold', 'While held']], 'animMode'));
+      field('Easing', selOf(Crosshair.EASES.map((id) => [id, Crosshair.EASE_LABELS[id]]), 'animEase', () => {}));
+      if (FADE_LIKE.indexOf(a.animation) < 0) field('Strength', numOf('animIntensity', 0, 30, 1));
+      field('Speed (ms)', numOf('animDuration', 40, 600, 10));
+      card.appendChild(grid);
+      const curve = mk('div', { className: 'dz-curve', innerHTML: easeCurve(a.animEase) });
+      const test = mk('button', { type: 'button', className: 'dz-test', textContent: 'Hold to test' });
+      const down = (e) => { e.preventDefault(); test.classList.add('on'); preview.input({ type: 'trigger', action: a.animTrigger, down: true }); realInput({ type: 'trigger', action: a.animTrigger, down: true }); };
+      const up = () => { if (!test.classList.contains('on')) return; test.classList.remove('on'); preview.input({ type: 'trigger', action: a.animTrigger, down: false }); realInput({ type: 'trigger', action: a.animTrigger, down: false }); };
+      test.addEventListener('pointerdown', down);
+      test.addEventListener('pointerup', up);
+      test.addEventListener('pointerleave', up);
+      const foot = mk('div', { className: 'dz-afoot' });
+      foot.appendChild(curve);
+      foot.appendChild(test);
+      card.appendChild(foot);
       host.appendChild(card);
     });
-    const add = mk('button', { type: 'button', className: 'xadd', textContent: '+ Add another effect' });
-    add.addEventListener('click', () => {
-      if (list.length >= Crosshair.MAX_EXTRA_ANIMS) { toast('Up to ' + (Crosshair.MAX_EXTRA_ANIMS + 1) + ' effects per layer'); return; }
-      list.push({ animation: 'expand', animTrigger: 'move', animMode: 'hold', animEase: 'linear', animIntensity: 6, animDuration: 150 });
-      renderExtras();
-      extrasChanged();
-    });
-    host.appendChild(add);
+    const max = Crosshair.MAX_EXTRA_ANIMS + 1;
+    if (slots.length < max) {
+      const add = mk('button', { type: 'button', className: 'dz-acard add', textContent: slots.length ? '+ Add animation' : '+ Animate this layer' });
+      add.addEventListener('click', addAnim);
+      host.appendChild(add);
+    }
+    const ob = $('#animOpenBtn');
+    if (ob) ob.classList.toggle('has', slots.length > 0);
   }
 
   function refreshVisibility() {
@@ -338,16 +417,23 @@
     Object.keys(rows).forEach((k) => { if (k !== 'reactMode') rows[k].set(cur()[k]); });
     const L = cur();
     rows.reactMode.set(L.dynOwn ? 'custom' : (L.dynamic === false ? 'off' : 'follow'));
-    renderExtras();
+    renderAnimCards();
     refreshVisibility();
     const t = $('#inspectorTitle');
-    if (t) t.textContent = 'Layer: ' + cur().name;
+    if (t) {
+      const n = selected().length;
+      t.innerHTML = '';
+      t.appendChild(document.createTextNode('INSPECTOR \u00b7 '));
+      t.appendChild(mk('span', { textContent: n > 1 ? n + ' layers (editing ' + cur().name + ')' : cur().name }));
+    }
     syncDynamics();
+    refreshSel();
   }
 
   function applyNewConfig(c) {
     design = viewOf(Crosshair.sanitizeDesign(c), 'base');
     sel = 0;
+    multi.clear();
     syncStates();
     renderLayers();
     applyToControls();
@@ -395,8 +481,8 @@
     const test = $('#dynTest');
     Crosshair.TRIGGER_IDS.forEach((id) => {
       const b = mk('button', { type: 'button', textContent: Crosshair.TRIGGER_LABELS[id], title: 'Hold to test' });
-      const down = (e) => { e.preventDefault(); b.classList.add('on'); preview.input({ type: 'trigger', action: id, down: true }); };
-      const up = () => { b.classList.remove('on'); preview.input({ type: 'trigger', action: id, down: false }); };
+      const down = (e) => { e.preventDefault(); b.classList.add('on'); preview.input({ type: 'trigger', action: id, down: true }); realInput({ type: 'trigger', action: id, down: true }); };
+      const up = () => { b.classList.remove('on'); preview.input({ type: 'trigger', action: id, down: false }); realInput({ type: 'trigger', action: id, down: false }); };
       b.addEventListener('pointerdown', down);
       b.addEventListener('pointerup', up);
       b.addEventListener('pointerleave', up);
@@ -499,7 +585,7 @@
     sel_.value = editState;
     $('#stateDel').hidden = editState === 'base';
     document.querySelector('.state-bar').classList.toggle('on', editState !== 'base');
-    $('#stateHint').textContent = editState === 'base'
+    $('#stateSel').title = $('#stateHint').textContent = editState === 'base'
       ? 'Optional: pick a state to design a different crosshair that replaces this one while that action is held.'
       : 'Editing the crosshair shown ' + STATE_NAMES[editState].toLowerCase() + '. Switch back to “Normal crosshair” to edit the default.';
   }
@@ -559,8 +645,11 @@
     });
     $('#pasteStyleBtn').addEventListener('click', () => {
       if (!styleClip) return;
-      Object.assign(cur(), clone(styleClip));
-      if (!cur().anims) delete cur().anims;
+      selected().forEach((i) => {
+        const l = design.layers[i];
+        Object.assign(l, clone(styleClip));
+        if (!l.anims) delete l.anims;
+      });
       applyToControls();
       layerChanged();
       toast('Style pasted');
@@ -585,27 +674,75 @@
     const row = $('#layerList').querySelector('[data-i="' + i + '"]');
     if (!row) return;
     drawThumb($('canvas', row), { layers: [Object.assign({}, design.layers[i], { visible: true })] });
+    const fx = $('.fx', row);
+    if (fx) fx.hidden = !Crosshair.animsOf(design.layers[i]).length;
   }
 
-  function selectLayer(i) {
-    sel = i;
-    document.querySelectorAll('#layerList .layer-row').forEach((r) => r.classList.toggle('selected', Number(r.dataset.i) === i));
+  function markRows() {
+    const s = selected();
+    document.querySelectorAll('#layerList .layer-row').forEach((r) => {
+      const i = Number(r.dataset.i);
+      r.classList.toggle('selected', i === sel);
+      r.classList.toggle('multi', i !== sel && s.indexOf(i) >= 0);
+    });
+  }
+
+  // add = Shift/Ctrl-click: toggles the layer in the selection.
+  function selectLayer(i, add) {
+    if (add) {
+      const set = new Set(selected());
+      if (set.has(i) && set.size > 1) {
+        set.delete(i);
+        if (sel === i) sel = Array.from(set).pop();
+      } else {
+        set.add(i);
+        sel = i;
+      }
+      multi.clear();
+      set.forEach((j) => { if (j !== sel) multi.add(j); });
+    } else {
+      sel = i;
+      multi.clear();
+    }
+    markRows();
     applyToControls();
     commitSoon();
+  }
+
+  const KIND_ICONS = {
+    shape: 'M12 3v6M12 15v6M3 12h6M15 12h6',
+    image: 'M4 5h16v14H4zM8 14l3-3 5 5',
+    text: 'M5 6V4h14v2M12 4v16M9 20h6',
+    draw: 'M4 20l4-1L19 8l-3-3L5 16z'
+  };
+  const svgIcon = (d) => '<svg viewBox="0 0 24 24"><path d="' + d + '"/></svg>';
+  const EYE_ON = 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6';
+  const EYE_OFF = 'M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3 3.5M6.6 6.6C4 8.4 2 12 2 12s4 6 10 6c1.6 0 3-.4 4.3-1';
+  let dragFrom = -1;
+
+  function startRename(i) {
+    const row = $('#layerList').querySelector('[data-i="' + i + '"]');
+    if (!row) return;
+    const name = $('.layer-name', row);
+    name.readOnly = false;
+    name.focus();
+    name.select();
   }
 
   function renderLayers() {
     const list = $('#layerList');
     list.textContent = '';
     const n = design.layers.length;
+    const s = selected();
     for (let i = n - 1; i >= 0; i--) {
       const l = design.layers[i];
-      const row = mk('div', { className: 'layer-row' + (i === sel ? ' selected' : '') + (l.visible === false ? ' hidden-layer' : '') });
+      const row = mk('div', { className: 'layer-row' + (i === sel ? ' selected' : '') + (i !== sel && s.indexOf(i) >= 0 ? ' multi' : '') + (l.visible === false ? ' hidden-layer' : '') });
       row.dataset.i = String(i);
-      const eye = mk('button', { type: 'button', className: 'eye', title: 'Show / hide', textContent: l.visible === false ? '○' : '●' });
-      eye.addEventListener('click', (e) => { e.stopPropagation(); toggleLayer(i); });
+      row.draggable = true;
+      row.appendChild(mk('span', { className: 'grip', title: 'Drag to reorder', textContent: '⋮⋮' }));
+      row.appendChild(mk('span', { className: 'kind', innerHTML: svgIcon(KIND_ICONS[l.kind] || KIND_ICONS.shape) }));
       const thumb = mk('canvas', { className: 'layer-thumb', width: 64, height: 64 });
-      const name = mk('input', { type: 'text', className: 'layer-name', value: l.name, readOnly: true, maxLength: 40, spellcheck: false });
+      const name = mk('input', { type: 'text', className: 'layer-name', value: l.name, readOnly: true, maxLength: 40, spellcheck: false, tabIndex: -1 });
       const finish = () => {
         if (name.readOnly) return;
         name.readOnly = true;
@@ -614,30 +751,78 @@
         if (i === sel) applyToControls();
         commitNow();
       };
-      name.addEventListener('dblclick', (e) => { e.stopPropagation(); name.readOnly = false; name.focus(); name.select(); });
+      name.addEventListener('dblclick', (e) => { e.stopPropagation(); startRename(i); });
       name.addEventListener('blur', finish);
+      name.addEventListener('mousedown', (e) => { if (name.readOnly) e.preventDefault(); });
       name.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') name.blur();
         else if (e.key === 'Escape') { name.value = design.layers[i].name; name.blur(); }
         e.stopPropagation();
       });
-      const btn = (txt, title, fn, dis) => {
-        const b = mk('button', { type: 'button', textContent: txt, title: title, disabled: !!dis });
-        b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
-        return b;
-      };
-      row.appendChild(eye);
+      const fx = mk('span', { className: 'fx', title: 'This layer has animations', textContent: '✦', hidden: !Crosshair.animsOf(l).length });
+      const eye = mk('button', { type: 'button', className: 'eye', title: 'Show / hide', innerHTML: svgIcon(l.visible === false ? EYE_OFF : EYE_ON) });
+      eye.addEventListener('click', (e) => { e.stopPropagation(); toggleLayer(i); });
       row.appendChild(thumb);
       row.appendChild(name);
-      row.appendChild(btn('▲', 'Move up', () => moveLayer(i, 1), i === n - 1));
-      row.appendChild(btn('▼', 'Move down', () => moveLayer(i, -1), i === 0));
-      row.appendChild(btn('⧉', 'Duplicate', () => dupLayer(i)));
-      row.appendChild(btn('✕', 'Delete', () => delLayer(i), n <= 1));
-      row.addEventListener('click', () => { if (i !== sel) selectLayer(i); });
+      row.appendChild(fx);
+      row.appendChild(eye);
+      row.addEventListener('click', (e) => {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) selectLayer(i, true);
+        else if (i !== sel || multi.size) selectLayer(i, false);
+      });
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (selected().indexOf(i) < 0) selectLayer(i, false);
+        else if (i !== sel) { sel = i; markRows(); applyToControls(); }
+        openCtx(e.clientX, e.clientY, i);
+      });
+      row.addEventListener('dragstart', (e) => {
+        if (!name.readOnly) { e.preventDefault(); return; }
+        dragFrom = i;
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', String(i)); } catch (err) { /* ignore */ }
+      });
+      row.addEventListener('dragend', () => { dragFrom = -1; row.classList.remove('dragging'); list.querySelectorAll('.drop-above,.drop-below').forEach((r) => r.classList.remove('drop-above', 'drop-below')); });
+      row.addEventListener('dragover', (e) => {
+        if (dragFrom < 0) return;
+        e.preventDefault();
+        const r = row.getBoundingClientRect();
+        const above = e.clientY < r.top + r.height / 2;
+        row.classList.toggle('drop-above', above);
+        row.classList.toggle('drop-below', !above);
+      });
+      row.addEventListener('dragleave', () => row.classList.remove('drop-above', 'drop-below'));
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (dragFrom < 0) return;
+        const r = row.getBoundingClientRect();
+        const above = e.clientY < r.top + r.height / 2;
+        // The list shows the top layer first, so "above" in the list means a higher index.
+        let to = above ? i + 1 : i;
+        if (dragFrom < to) to -= 1;
+        reorderLayer(dragFrom, to);
+        dragFrom = -1;
+      });
       list.appendChild(row);
       drawThumb(thumb, { layers: [Object.assign({}, l, { visible: true })] });
     }
     $('#addLayerBtn').disabled = n >= Crosshair.MAX_LAYERS;
+    const cnt = $('#layerCount');
+    if (cnt) cnt.textContent = String(n);
+  }
+
+  function reorderLayer(from, to) {
+    to = Math.max(0, Math.min(design.layers.length - 1, to));
+    if (from === to) return;
+    const keep = selected().map((i) => design.layers[i]);
+    const main = cur();
+    const [l] = design.layers.splice(from, 1);
+    design.layers.splice(to, 0, l);
+    sel = design.layers.indexOf(main);
+    multi.clear();
+    keep.forEach((x) => { const j = design.layers.indexOf(x); if (j !== sel) multi.add(j); });
+    layerChanged();
   }
 
   function layerChanged() {
@@ -655,6 +840,7 @@
     if (kind === 'text') l.text = 'X';
     design.layers.push(l);
     sel = design.layers.length - 1;
+    multi.clear();
     layerChanged();
     setDrawMode(kind === 'draw');
   }
@@ -668,44 +854,95 @@
     }
   }
 
-  function dupLayer(i) {
-    if (design.layers.length >= Crosshair.MAX_LAYERS) { toast('Layer limit reached (' + Crosshair.MAX_LAYERS + ')'); return; }
-    const c = JSON.parse(JSON.stringify(design.layers[i]));
-    c.name = (c.name + ' copy').slice(0, 40);
-    design.layers.splice(i + 1, 0, c);
-    sel = i + 1;
+  // Duplicates every selected layer (each copy goes right above its original).
+  function dupLayer() {
+    const idx = selected();
+    if (design.layers.length + idx.length > Crosshair.MAX_LAYERS) { toast('Layer limit reached (' + Crosshair.MAX_LAYERS + ')'); return; }
+    const copies = [];
+    idx.slice().reverse().forEach((i) => {
+      const c = clone(design.layers[i]);
+      c.name = (c.name + ' copy').slice(0, 40);
+      design.layers.splice(i + 1, 0, c);
+      copies.push(c);
+    });
+    const main = copies[copies.length - 1 - idx.indexOf(sel)] || copies[0];
+    sel = design.layers.indexOf(main);
+    multi.clear();
+    copies.forEach((c) => { const j = design.layers.indexOf(c); if (j !== sel) multi.add(j); });
     layerChanged();
   }
 
-  function delLayer(i) {
-    if (design.layers.length <= 1) return;
-    design.layers.splice(i, 1);
-    sel = Math.max(0, Math.min(sel > i ? sel - 1 : sel, design.layers.length - 1));
+  function delLayer() {
+    const idx = selected();
+    if (idx.length >= design.layers.length) { toast('A crosshair needs at least one layer'); return; }
+    idx.slice().reverse().forEach((i) => design.layers.splice(i, 1));
+    sel = Math.max(0, Math.min(idx[0], design.layers.length - 1));
+    multi.clear();
     layerChanged();
   }
 
   function moveLayer(i, dir) {
-    const j = i + dir;
-    if (j < 0 || j >= design.layers.length) return;
-    const t = design.layers[i];
-    design.layers[i] = design.layers[j];
-    design.layers[j] = t;
-    if (sel === i) sel = j; else if (sel === j) sel = i;
-    layerChanged();
+    reorderLayer(i, i + dir);
   }
 
   function toggleLayer(i) {
-    design.layers[i].visible = design.layers[i].visible === false;
+    const s = selected();
+    const group = s.indexOf(i) >= 0 ? s : [i];
+    const show = design.layers[i].visible === false;
+    group.forEach((j) => { design.layers[j].visible = show; });
     layerChanged();
   }
 
+  // ---- right-click menu on a layer
+  function openCtx(x, y, i) {
+    const m = $('#ctxMenu');
+    m.textContent = '';
+    const n = selected().length;
+    const item = (label, key, fn, dis) => {
+      const b = mk('button', { type: 'button', disabled: !!dis });
+      b.appendChild(mk('span', { textContent: label }));
+      if (key) b.appendChild(mk('kbd', { textContent: key }));
+      b.addEventListener('click', () => { m.hidden = true; fn(); });
+      m.appendChild(b);
+    };
+    const sep = () => m.appendChild(mk('hr'));
+    item('Rename', 'F2', () => startRename(i), n > 1);
+    item(n > 1 ? 'Duplicate ' + n + ' layers' : 'Duplicate', 'Ctrl+D', dupLayer);
+    item(design.layers[i].visible === false ? 'Show' : 'Hide', 'H', () => toggleLayer(i));
+    sep();
+    item('Bring forward', 'Ctrl+]', () => moveLayer(i, 1), i >= design.layers.length - 1 || n > 1);
+    item('Send backward', 'Ctrl+[', () => moveLayer(i, -1), i <= 0 || n > 1);
+    item('Mirror copy ↔', '', () => mirrorLayer('x'), n > 1);
+    item('Mirror copy ↕', '', () => mirrorLayer('y'), n > 1);
+    sep();
+    item('Copy style', 'Ctrl+Shift+C', () => $('#copyStyleBtn').click(), n > 1);
+    item('Paste style', 'Ctrl+Shift+V', () => $('#pasteStyleBtn').click(), !styleClip);
+    sep();
+    item(n > 1 ? 'Delete ' + n + ' layers' : 'Delete', 'Del', delLayer, n >= design.layers.length);
+    m.hidden = false;
+    const r = m.getBoundingClientRect();
+    m.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px';
+    m.style.top = Math.min(y, window.innerHeight - r.height - 8) + 'px';
+  }
+
   // ---------------------------------------------------------------- controls
+  const GROUPS_KEY = 'ezr.closedGroups';
+  let closedGroups = { 'Color & outline': true, Transform: true, Effects: true };
+  try { const o = JSON.parse(localStorage.getItem(GROUPS_KEY) || 'null'); if (o && typeof o === 'object') closedGroups = o; } catch (e) { /* ignore */ }
+
   function buildControls() {
     const host = $('#controls');
     SCHEMA.forEach((g) => {
-      const box = mk('section', { className: 'group' });
-      const gh = mk('h3', { textContent: g.title });
-      gh.addEventListener('click', () => box.classList.toggle('collapsed'));
+      const box = mk('section', { className: 'group' + (closedGroups[g.title] ? ' collapsed' : '') });
+      const gh = mk('h3');
+      gh.appendChild(mk('span', { className: 'gi', innerHTML: svgIcon(g.icon || 'M12 12h.01') }));
+      gh.appendChild(mk('span', { className: 'gt', textContent: g.title }));
+      gh.appendChild(mk('span', { className: 'gc', innerHTML: svgIcon('M6 9l6 6 6-6') }));
+      gh.addEventListener('click', () => {
+        box.classList.toggle('collapsed');
+        closedGroups[g.title] = box.classList.contains('collapsed');
+        try { localStorage.setItem(GROUPS_KEY, JSON.stringify(closedGroups)); } catch (e) { /* ignore */ }
+      });
       box.appendChild(gh);
       const grp = { el: box, def: g, rows: [] };
       groups.push(grp);
@@ -986,7 +1223,10 @@
 
   function setDrawMode(on) {
     drawMode = !!on && cur().kind === 'draw';
-    $('#previewCanvas').classList.toggle('drawing', drawMode);
+    $('#stage').classList.toggle('drawing', drawMode);
+    const top = $('#drawHintTop');
+    if (top) top.hidden = !drawMode;
+    refreshSel();
     const b = $('#drawToggle');
     if (b) { b.classList.toggle('active', drawMode); b.textContent = drawMode ? 'Drawing… (click to stop)' : 'Draw on preview'; }
     const hint = $('#drawHint');
@@ -1017,7 +1257,7 @@
     bar.appendChild(clr);
     bar.appendChild(sym);
     wrap.appendChild(bar);
-    wrap.appendChild(mk('div', { id: 'drawHint', className: 'draw-hint', hidden: true, textContent: 'Click and drag on the preview. Use a mirror option for a symmetric crosshair.' }));
+    wrap.appendChild(mk('div', { id: 'drawHint', className: 'draw-hint', hidden: true, textContent: 'Click and drag on the canvas. Use a mirror option for a symmetric crosshair.' }));
     ctl.appendChild(wrap);
   }
 
@@ -1030,9 +1270,131 @@
     commitNow();
   }
 
+  // ---------------------------------------------------------------- canvas: selection box, move / scale / rotate
+  let snapOn = true;
+  const boundsCache = new Map();
+  const scratch = document.createElement('canvas');
+  scratch.width = scratch.height = 400;
+
+  // Tight box of a layer in its own (unrotated) frame, measured from real pixels so every shape kind fits.
+  function layerBounds(l) {
+    const src = l.src ? l.src.length + ':' + l.src.slice(-48) : '';
+    const key = JSON.stringify(Object.assign({}, l, { src: src, name: '', offsetX: 0, offsetY: 0, rotation: 0, visible: true, anims: null, animation: 'none' }));
+    let b = boundsCache.get(key);
+    if (b) return b;
+    const ext = Math.max(4, baseExtent(l));
+    const k = Math.min(8, 180 / ext);
+    const g = scratch.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, 400, 400);
+    const one = Crosshair.sanitize(Object.assign({}, l, { offsetX: 0, offsetY: 0, rotation: 0, visible: true, glow: 0, blur: 0, animation: 'none', anims: undefined }));
+    Crosshair.draw(g, { layers: [one] }, Crosshair.newAnim(), 200, 200, k, { noOffset: true });
+    const d = g.getImageData(0, 0, 400, 400).data;
+    let x0 = 400, y0 = 400, x1 = -1, y1 = -1;
+    for (let y = 0; y < 400; y += 1) {
+      const row = y * 1600;
+      for (let x = 0; x < 400; x += 1) {
+        if (d[row + x * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      }
+    }
+    if (x1 < 0) b = { x0: -ext / 2, y0: -ext / 2, x1: ext / 2, y1: ext / 2, empty: true };
+    else b = { x0: (x0 - 200) / k, y0: (y0 - 200) / k, x1: (x1 + 1 - 200) / k, y1: (y1 + 1 - 200) / k };
+    if (boundsCache.size > 300) boundsCache.clear();
+    if (!b.empty) boundsCache.set(key, b);
+    return b;
+  }
+
+  // Visual rotation of a layer on screen (a single flip mirrors the direction of rotation).
+  const visRot = (l) => (l.flipX !== l.flipY ? -1 : 1) * l.rotation;
+
+  function stageCenter() {
+    const st = $('#stage');
+    return [st.clientWidth / 2, st.clientHeight / 2];
+  }
+
+  // Stage pixel -> which layer is under it (selected layer wins, then the top-most).
+  function hitTest(px, py) {
+    const c = stageCenter();
+    const dx = (px - c[0]) / viewZoom, dy = (py - c[1]) / viewZoom;
+    const pad = 4 / viewZoom;
+    const hit = (i) => {
+      const l = design.layers[i];
+      if (!l || l.visible === false) return false;
+      const b = layerBounds(l);
+      const a = (-visRot(l) * Math.PI) / 180;
+      const x = dx - l.offsetX, y = dy - l.offsetY;
+      const lx = x * Math.cos(a) - y * Math.sin(a), ly = x * Math.sin(a) + y * Math.cos(a);
+      return lx >= b.x0 - pad && lx <= b.x1 + pad && ly >= b.y0 - pad && ly <= b.y1 + pad;
+    };
+    if (hit(sel)) return sel;
+    for (let i = design.layers.length - 1; i >= 0; i--) if (hit(i)) return i;
+    return -1;
+  }
+
+  function refreshSel() {
+    const host = $('#selLayer');
+    if (!host || !preview) return;
+    host.textContent = '';
+    if (drawMode) return;
+    const c = stageCenter();
+    selected().forEach((i) => {
+      const l = design.layers[i];
+      if (!l || l.visible === false) return;
+      const b = layerBounds(l);
+      const box = mk('div', { className: 'dz-box' + (i === sel ? ' main' : '') });
+      const w = (b.x1 - b.x0) * viewZoom, h = (b.y1 - b.y0) * viewZoom;
+      box.style.width = w + 'px';
+      box.style.height = h + 'px';
+      box.style.left = (c[0] + l.offsetX * viewZoom) + 'px';
+      box.style.top = (c[1] + l.offsetY * viewZoom) + 'px';
+      box.style.transform = 'rotate(' + visRot(l) + 'deg) translate(' + (b.x0 * viewZoom) + 'px,' + (b.y0 * viewZoom) + 'px)';
+      if (i === sel) {
+        box.appendChild(mk('span', { className: 'dz-tag', textContent: l.name }));
+        const rot = mk('span', { className: 'dz-rot', title: 'Drag to rotate (Shift = 15° steps)' });
+        rot.dataset.h = 'rot';
+        box.appendChild(rot);
+        ['nw', 'ne', 'sw', 'se'].forEach((p) => {
+          const hd = mk('span', { className: 'dz-h ' + p, title: 'Drag to resize' });
+          hd.dataset.h = 'scale';
+          box.appendChild(hd);
+        });
+      }
+      host.appendChild(box);
+    });
+  }
+
+  // Uniform resize of one layer from a saved copy; values stay inside each slider's range.
+  const clampTo = (v, lo, hi, st) => Math.max(lo, Math.min(hi, Math.round(v / st) * st));
+  function scaleLayer(l, s0, k) {
+    const st = snapOn ? 0.5 : 0.1;
+    if (l.kind === 'shape') {
+      l.size = clampTo(s0.size * k, 0, 60, st);
+      l.gap = clampTo(s0.gap * k, 0, 40, st);
+      l.thickness = clampTo(s0.thickness * k, 1, 12, st);
+      l.dotSize = clampTo(s0.dotSize * k, 1, 12, 1);
+    } else if (l.kind === 'image') {
+      l.imgSize = clampTo(s0.imgSize * k, 4, 400, 1);
+    } else if (l.kind === 'text') {
+      l.fontSize = clampTo(s0.fontSize * k, 6, 200, 1);
+    } else if (l.kind === 'draw') {
+      l.strokes = s0.strokes.map((stk) => stk.map((p) => [p[0] * k, p[1] * k]));
+      l.brush = clampTo(s0.brush * k, 1, 24, 1);
+    }
+  }
+
+  function syncRows(keys) {
+    keys.forEach((k) => { if (rows[k]) rows[k].set(cur()[k]); });
+  }
+
   function wirePreviewPointer() {
+    const st = $('#stage');
     const cv = $('#previewCanvas');
     let live = null; // arrays being filled for the current stroke (one per mirror)
+    let drag = null;
+    const local = (e) => {
+      const r = st.getBoundingClientRect();
+      return [e.clientX - r.left, e.clientY - r.top];
+    };
     const toLayer = (e) => {
       const r = cv.getBoundingClientRect();
       const l = cur();
@@ -1048,42 +1410,148 @@
       if (symmetry === 'xy') m.push([-1, -1]);
       return m;
     };
-    cv.addEventListener('pointerdown', (e) => {
+    const trig = (action, down) => { preview.input({ type: 'trigger', action: action, down: down }); realInput({ type: 'trigger', action: action, down: down }); };
+
+    st.addEventListener('contextmenu', (e) => e.preventDefault());
+    st.addEventListener('wheel', (e) => {
+      if (e.target.closest('.dz-real')) return;
+      e.preventDefault();
+      setZoom(viewZoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+    }, { passive: false });
+
+    st.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.dz-real')) return;
+      if (e.button === 2) { drag = { kind: 'aim' }; trig('aim', true); st.setPointerCapture(e.pointerId); return; }
+      if (e.button !== 0) return;
       if (drawMode && cur().kind === 'draw') {
         e.preventDefault();
-        cv.setPointerCapture(e.pointerId);
+        st.setPointerCapture(e.pointerId);
         const p = toLayer(e);
         const ms = mirrors();
         live = ms.map((m) => [[p[0] * m[0], p[1] * m[1]]]);
-        live.forEach((st) => cur().strokes.push(st));
+        live.forEach((stk) => cur().strokes.push(stk));
         live.ms = ms;
         preview.setConfig(design);
         return;
       }
-      preview.input({ type: 'trigger', action: 'shoot', down: true });
+      const p = local(e);
+      const handle = e.target.dataset && e.target.dataset.h;
+      const c = stageCenter();
+      if (handle) {
+        e.preventDefault();
+        st.setPointerCapture(e.pointerId);
+        const l = cur();
+        const lc = [c[0] + l.offsetX * viewZoom, c[1] + l.offsetY * viewZoom];
+        drag = {
+          kind: handle, lc: lc, moved: false,
+          d0: Math.max(4, Math.hypot(p[0] - lc[0], p[1] - lc[1])),
+          a0: Math.atan2(p[1] - lc[1], p[0] - lc[0]),
+          starts: selected().map((i) => ({ i: i, s: clone(design.layers[i]) }))
+        };
+        return;
+      }
+      const i = hitTest(p[0], p[1]);
+      if (i < 0) {
+        if (multi.size && !(e.shiftKey || e.ctrlKey)) { multi.clear(); markRows(); applyToControls(); }
+        drag = { kind: 'shoot' };
+        trig('shoot', true);
+        st.setPointerCapture(e.pointerId);
+        return;
+      }
+      e.preventDefault();
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { selectLayer(i, true); return; }
+      if (selected().indexOf(i) < 0) selectLayer(i, false);
+      else if (i !== sel) { sel = i; markRows(); applyToControls(); }
+      st.setPointerCapture(e.pointerId);
+      drag = { kind: 'move', p0: p, moved: false, starts: selected().map((j) => ({ i: j, x: design.layers[j].offsetX, y: design.layers[j].offsetY })) };
     });
-    cv.addEventListener('pointermove', (e) => {
-      if (!live) return;
-      const p = toLayer(e);
-      let moved = false;
-      live.forEach((st, i) => {
-        const m = live.ms[i];
-        const q = [p[0] * m[0], p[1] * m[1]];
-        const last = st[st.length - 1];
-        if (Math.hypot(q[0] - last[0], q[1] - last[1]) >= 0.8 && st.length < 600) { st.push(q); moved = true; }
-      });
-      if (moved) preview.setConfig(design);
+
+    st.addEventListener('pointermove', (e) => {
+      if (live) {
+        const p = toLayer(e);
+        let moved = false;
+        live.forEach((stk, i) => {
+          const m = live.ms[i];
+          const q = [p[0] * m[0], p[1] * m[1]];
+          const last = stk[stk.length - 1];
+          if (Math.hypot(q[0] - last[0], q[1] - last[1]) >= 0.8 && stk.length < 600) { stk.push(q); moved = true; }
+        });
+        if (moved) preview.setConfig(design);
+        return;
+      }
+      if (!drag || drag.kind === 'shoot' || drag.kind === 'aim') {
+        if (!drag) {
+          const h = e.target.dataset && e.target.dataset.h;
+          const p = local(e);
+          st.style.cursor = h === 'rot' ? 'grab' : h === 'scale' ? 'nwse-resize' : (hitTest(p[0], p[1]) >= 0 ? 'move' : '');
+        }
+        return;
+      }
+      const p = local(e);
+      const free = e.altKey || !snapOn;
+      if (drag.kind === 'move') {
+        let dx = (p[0] - drag.p0[0]) / viewZoom, dy = (p[1] - drag.p0[1]) / viewZoom;
+        if (!drag.moved && Math.hypot(dx, dy) * viewZoom < 2) return;
+        drag.moved = true;
+        const m0 = drag.starts.find((s0) => s0.i === sel) || drag.starts[0];
+        if (!free) {
+          // Whole pixels, and the main layer sticks to the center lines.
+          let nx = Math.round(m0.x + dx), ny = Math.round(m0.y + dy);
+          const stick = 5 / viewZoom;
+          if (Math.abs(m0.x + dx) < stick) nx = 0;
+          if (Math.abs(m0.y + dy) < stick) ny = 0;
+          dx = nx - m0.x; dy = ny - m0.y;
+        }
+        drag.starts.forEach((s0) => {
+          const l = design.layers[s0.i];
+          l.offsetX = Math.max(-250, Math.min(250, Math.round((s0.x + dx) * 10) / 10));
+          l.offsetY = Math.max(-250, Math.min(250, Math.round((s0.y + dy) * 10) / 10));
+        });
+        syncRows(['offsetX', 'offsetY']);
+      } else if (drag.kind === 'scale') {
+        drag.moved = true;
+        const k = Math.max(0.05, Math.hypot(p[0] - drag.lc[0], p[1] - drag.lc[1]) / drag.d0);
+        drag.starts.forEach((s0) => scaleLayer(design.layers[s0.i], s0.s, k));
+        syncRows(['size', 'gap', 'thickness', 'dotSize', 'imgSize', 'fontSize', 'brush']);
+      } else if (drag.kind === 'rot') {
+        drag.moved = true;
+        const a = Math.atan2(p[1] - drag.lc[1], p[0] - drag.lc[0]);
+        let delta = ((a - drag.a0) * 180) / Math.PI;
+        drag.starts.forEach((s0) => {
+          const l = design.layers[s0.i];
+          const sg = l.flipX !== l.flipY ? -1 : 1;
+          let r = s0.s.rotation + sg * delta;
+          r = e.shiftKey ? Math.round(r / 15) * 15 : (free ? Math.round(r * 10) / 10 : Math.round(r));
+          l.rotation = Math.round((((r % 360) + 360) % 360) * 10) / 10 % 360;
+        });
+        syncRows(['rotation']);
+      }
+      preview.setConfig(design);
+      refreshSel();
+      pushSoon();
     });
+
     const end = () => {
       if (live) {
         lastStrokeGroup = live.length;
         live = null;
         strokesChanged();
+        return;
       }
-      preview.input({ type: 'trigger', action: 'shoot', down: false });
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      if (d.kind === 'shoot') trig('shoot', false);
+      else if (d.kind === 'aim') trig('aim', false);
+      else if (d.moved) {
+        selected().forEach((i) => drawLayerThumb(i));
+        updateZoom();
+        pushSoon();
+        commitNow();
+      }
     };
-    cv.addEventListener('pointerup', end);
-    cv.addEventListener('pointercancel', end);
+    st.addEventListener('pointerup', end);
+    st.addEventListener('pointercancel', end);
   }
 
   // ---- triggers
@@ -1175,19 +1643,61 @@
     });
   }
 
-  // Lets you judge the crosshair on your own game screenshot.
+  // ---- 1:1 in-game preview: real size (times the overlay scale) over game-like backgrounds or your screenshot.
   const BG_KEY = 'mishez.previewBg';
-  function setPreviewBg(url) {
+  const BGI_KEY = 'ezr.previewBgIndex';
+  const BGS = [['dust', 'Dust · daylight'], ['night', 'Night'], ['grass', 'Grass'], ['sky', 'Sky'], ['dark', 'Dark'], ['light', 'Light']];
+  let realCtl = null;
+  let photoBg = '';
+  let bgIndex = 0;
+  function realInput(e) { if (realCtl) realCtl.input(e); }
+
+  function bgList() { return photoBg ? BGS.concat([['photo', 'Your screenshot']]) : BGS; }
+
+  function showBg() {
+    const list = bgList();
+    bgIndex = ((bgIndex % list.length) + list.length) % list.length;
+    const b = list[bgIndex];
     const w = $('#previewWrap');
-    w.className = 'preview bg-image';
-    w.style.backgroundImage = 'url("' + url + '")';
+    w.className = 'dz-scene bg-' + (b[0] === 'photo' ? 'image' : b[0]);
+    w.style.backgroundImage = b[0] === 'photo' ? 'url("' + photoBg + '")' : '';
+    $('#bgName').textContent = b[1];
+    try { localStorage.setItem(BGI_KEY, b[0]); } catch (e) { /* ignore */ }
+  }
+
+  function setPreviewBg(url) {
+    photoBg = url;
+    bgIndex = bgList().length - 1;
+    showBg();
+  }
+
+  function updateReal() {
+    if (!realCtl) return;
+    realCtl.setZoom(state && state.overlayScale ? state.overlayScale : 1);
   }
 
   function initPreviewBg() {
     try {
       const saved = localStorage.getItem(BG_KEY);
-      if (saved && /^data:image\//.test(saved)) setPreviewBg(saved);
+      if (saved && /^data:image\//.test(saved)) photoBg = saved;
+      const id = localStorage.getItem(BGI_KEY);
+      const j = bgList().findIndex((b) => b[0] === id);
+      if (j >= 0) bgIndex = j;
     } catch (e) { /* storage unavailable */ }
+    showBg();
+    $('#bgPrev').addEventListener('click', () => { bgIndex -= 1; showBg(); });
+    $('#bgNext').addEventListener('click', () => { bgIndex += 1; showBg(); });
+    $('#realToggle').addEventListener('click', () => {
+      const r = $('#realPrev');
+      r.classList.toggle('min');
+      try { localStorage.setItem('ezr.realMin', r.classList.contains('min') ? '1' : ''); } catch (e) { /* ignore */ }
+    });
+    try { if (localStorage.getItem('ezr.realMin')) $('#realPrev').classList.add('min'); } catch (e) { /* ignore */ }
+    const rc = $('#realCanvas');
+    const tr = (down) => (e) => { if (e.button !== 0 && e.button !== 2) return; const a = e.button === 2 ? 'aim' : 'shoot'; realInput({ type: 'trigger', action: a, down: down }); preview.input({ type: 'trigger', action: a, down: down }); };
+    rc.addEventListener('pointerdown', tr(true));
+    rc.addEventListener('pointerup', tr(false));
+    rc.addEventListener('contextmenu', (e) => e.preventDefault());
     $('#bgImgBtn').addEventListener('click', () => $('#bgFile').click());
     $('#bgFile').addEventListener('change', () => {
       const f = $('#bgFile').files && $('#bgFile').files[0];
@@ -1196,7 +1706,7 @@
       rd.onload = () => {
         const img = new Image();
         img.onload = () => {
-          const k = Math.min(1, 700 / Math.max(img.naturalWidth, img.naturalHeight));
+          const k = Math.min(1, 900 / Math.max(img.naturalWidth, img.naturalHeight));
           const c = document.createElement('canvas');
           c.width = Math.max(1, Math.round(img.naturalWidth * k));
           c.height = Math.max(1, Math.round(img.naturalHeight * k));
@@ -1210,6 +1720,202 @@
       };
       rd.readAsDataURL(f);
       $('#bgFile').value = '';
+    });
+  }
+
+  // ---- stage size: the canvas is a square that covers the whole stage, centered.
+  function resizeStage() {
+    const st = $('#stage');
+    const w = st.clientWidth, h = st.clientHeight;
+    if (!w || !h) return;
+    preview.setSize(Math.max(w, h));
+    updateZoom();
+    const gz = parseFloat(st.style.getPropertyValue('--gz')) || 10;
+    st.style.setProperty('--gx', ((w / 2) % (gz * 5)) + 'px');
+    st.style.setProperty('--gy', ((h / 2) % (gz * 5)) + 'px');
+  }
+
+  // ---- top bar: name, saved state, hotkey, share, save, apply
+  let savedTimer = 0;
+  function markDirty() {
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(updateSavedState, 400);
+  }
+
+  function updateSavedState() {
+    const el = $('#savedState');
+    if (!el || !state) return;
+    const has = curName && state.profiles && Object.prototype.hasOwnProperty.call(state.profiles, curName);
+    let txt = 'Not saved', cls = 'new';
+    if (has) {
+      const same = JSON.stringify(Crosshair.sanitizeDesign(state.profiles[curName])) === JSON.stringify(Crosshair.sanitizeDesign(canon()));
+      txt = same ? 'Saved' : 'Unsaved changes';
+      cls = same ? 'ok' : 'dirty';
+    }
+    el.className = 'dz-saved ' + cls;
+    $('b', el).textContent = txt;
+    updateHotkeyChip();
+  }
+
+  function updateHotkeyChip() {
+    const v = $('#hotkeyChipVal');
+    if (!v || !state) return;
+    const hk = (state.profileHotkeys || {})[curName];
+    v.textContent = hk || 'Unbound';
+    $('#hotkeyChip').classList.toggle('bound', !!hk);
+  }
+
+  async function saveCurrent() {
+    const name = $('#profileName').value.trim();
+    if (!name) { toast('Name your crosshair first'); $('#profileName').focus(); return; }
+    const r = await api.saveProfile(name, canon());
+    if (r.ok) {
+      if (state.profiles) state.profiles[name] = Crosshair.sanitizeDesign(canon());
+      setCurName(name);
+      toast('Saved “' + name + '”');
+    } else toast('That name is not allowed');
+  }
+
+  function captureProfileHotkey() {
+    const chip = $('#hotkeyChip');
+    if (!curName || !state.profiles || !Object.prototype.hasOwnProperty.call(state.profiles, curName)) {
+      toast('Save this crosshair first, then give it a hotkey');
+      return;
+    }
+    if (chip.classList.contains('capturing')) return;
+    chip.classList.add('capturing');
+    $('#hotkeyChipVal').textContent = 'Press keys…';
+    api.pauseHotkey(true);
+    const stop = () => { document.removeEventListener('keydown', onKey, true); chip.classList.remove('capturing'); };
+    function onKey(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { stop(); api.pauseHotkey(false); updateHotkeyChip(); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        stop();
+        api.setProfileHotkey(curName, null).then(() => { api.pauseHotkey(false); toast('Hotkey removed'); });
+        return;
+      }
+      const acc = toAccelerator(e);
+      if (!acc) return;
+      stop();
+      api.setProfileHotkey(curName, acc).then((r) => {
+        if (r && r.ok) { state.profileHotkeys = r.profileHotkeys; toast(acc + ' now equips “' + curName + '”'); }
+        else toast((r && r.error) || 'Could not use that shortcut');
+        updateHotkeyChip();
+      });
+    }
+    document.addEventListener('keydown', onKey, true);
+  }
+
+  function initTopBar() {
+    const nameIn = $('#profileName');
+    nameIn.addEventListener('change', () => { curName = nameIn.value.trim().slice(0, 40); renderHome(); updateSavedState(); });
+    nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameIn.blur(); e.stopPropagation(); });
+    $('#saveProfileBtn').addEventListener('click', saveCurrent);
+    $('#applyBtn').addEventListener('click', async () => {
+      await api.setCrosshair(canon());
+      if (!state.overlayVisible) await api.setOverlay(true);
+      toast('Applied – it’s on your screen (' + state.hotkey + ' hides it)');
+    });
+    $('#newBtn').addEventListener('click', () => {
+      applyNewConfig(Crosshair.DEFAULT_DESIGN);
+      setCurName('');
+      fitMode = true;
+      updateZoom();
+      toast('New crosshair');
+    });
+    const pop = (btn, menu) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); const open = menu.hidden; closePops(); menu.hidden = !open; });
+    };
+    pop($('#savedBtn'), $('#savedMenu'));
+    pop($('#shareBtn'), $('#shareMenu'));
+    document.querySelectorAll('#shareMenu button').forEach((b) => b.addEventListener('click', async () => {
+      closePops();
+      if (b.dataset.share === 'xh') { await api.clipboardWrite(encodeCfg(canon())); toast('Share code copied – paste it into Import on the Home tab'); }
+      else exportCrosshair(b.dataset.share);
+    }));
+    document.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('.dz-pop, #savedBtn, #shareBtn')) closePops();
+      if (!e.target.closest('#ctxMenu')) $('#ctxMenu').hidden = true;
+    });
+    $('#hotkeyChip').addEventListener('click', captureProfileHotkey);
+    $('#hotkeyChip').addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (curName && (state.profileHotkeys || {})[curName]) api.setProfileHotkey(curName, null).then(() => toast('Hotkey removed'));
+    });
+  }
+
+  function closePops() {
+    document.querySelectorAll('.dz-pop').forEach((m) => { m.hidden = true; });
+  }
+
+  // ---- canvas toolbar + animation strip
+  function initCanvasTools() {
+    const st = $('#stage');
+    const store = (k, v) => { try { localStorage.setItem(k, v ? '1' : '0'); } catch (e) { /* ignore */ } };
+    const read = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === '1'; } catch (e) { return d; } };
+    const setGrid = (on) => { st.classList.toggle('grid', on); $('#gridBtn').classList.toggle('on', on); store('ezr.grid', on); };
+    const setSnap = (on) => { snapOn = on; $('#snapBtn').classList.toggle('on', on); store('ezr.snap', on); };
+    setGrid(read('ezr.grid', true));
+    setSnap(read('ezr.snap', true));
+    $('#gridBtn').addEventListener('click', () => setGrid(!st.classList.contains('grid')));
+    $('#snapBtn').addEventListener('click', () => setSnap(!snapOn));
+    $('#zoomIn').addEventListener('click', () => setZoom(viewZoom * 1.25));
+    $('#zoomOut').addEventListener('click', () => setZoom(viewZoom / 1.25));
+    $('#zoomFit').addEventListener('click', () => { fitMode = true; updateZoom(); });
+    $('#zoomLabel').addEventListener('dblclick', () => setZoom(1));
+    $('#zoomLabel').title = 'Double-click for 100%';
+
+    const dock = $('#animDock');
+    const setTab = (t) => {
+      dock.dataset.tab = t;
+      dock.querySelectorAll('.dz-atab').forEach((b) => b.classList.toggle('on', b.dataset.atab === t));
+      dock.querySelectorAll('.dz-apane').forEach((p) => { p.hidden = p.dataset.apane !== t; });
+      try { localStorage.setItem('ezr.animTab', t); } catch (e) { /* ignore */ }
+    };
+    const setOpen = (on) => {
+      dock.classList.toggle('open', on);
+      try { localStorage.setItem('ezr.animOpen', on ? '1' : ''); } catch (e) { /* ignore */ }
+    };
+    let t0 = 'anims';
+    try { t0 = localStorage.getItem('ezr.animTab') || 'anims'; if (localStorage.getItem('ezr.animOpen')) dock.classList.add('open'); } catch (e) { /* ignore */ }
+    setTab(t0);
+    dock.querySelectorAll('.dz-atab').forEach((b) => b.addEventListener('click', () => { setTab(b.dataset.atab); setOpen(true); }));
+    $('#animOpenBtn').addEventListener('click', () => {
+      setTab('anims');
+      setOpen(true);
+      if (!Crosshair.animsOf(cur()).length) addAnim();
+    });
+    $('#animCollapse').addEventListener('click', () => setOpen(!dock.classList.contains('open')));
+
+    if (window.ResizeObserver) new ResizeObserver(() => resizeStage()).observe(st);
+  }
+
+  // ---- designer keyboard shortcuts
+  function initDesignerKeys() {
+    document.addEventListener('keydown', (e) => {
+      if (!$('#tab-crosshair').classList.contains('active') || !$('#shapeModal').hidden) return;
+      const t = e.target;
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && t.type !== 'checkbox' && t.type !== 'range' && t.type !== 'button'))) return;
+      const k = e.key.toLowerCase();
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && k === 's') { e.preventDefault(); saveCurrent(); return; }
+      if (ctrl && k === 'd') { e.preventDefault(); dupLayer(); return; }
+      if (ctrl && k === 'a') { e.preventDefault(); multi.clear(); design.layers.forEach((_, i) => { if (i !== sel) multi.add(i); }); markRows(); applyToControls(); return; }
+      if (ctrl && e.shiftKey && k === 'c') { e.preventDefault(); $('#copyStyleBtn').click(); return; }
+      if (ctrl && e.shiftKey && k === 'v') { e.preventDefault(); $('#pasteStyleBtn').click(); return; }
+      if (ctrl && e.key === ']') { e.preventDefault(); if (selected().length === 1) moveLayer(sel, 1); return; }
+      if (ctrl && e.key === '[') { e.preventDefault(); if (selected().length === 1) moveLayer(sel, -1); return; }
+      if (ctrl || e.altKey) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); delLayer(); }
+      else if (e.key === 'F2') { e.preventDefault(); if (selected().length === 1) startRename(sel); }
+      else if (k === 'g') $('#gridBtn').click();
+      else if (k === 'f') { fitMode = true; updateZoom(); }
+      else if (k === 'h') toggleLayer(sel);
+      else if (e.key === '+' || e.key === '=') setZoom(viewZoom * 1.25);
+      else if (e.key === '-') setZoom(viewZoom / 1.25);
+      else if (e.key === 'Escape') { $('#ctxMenu').hidden = true; closePops(); if (multi.size) { multi.clear(); markRows(); applyToControls(); } }
     });
   }
 
@@ -1284,8 +1990,11 @@
       const load = mk('button', { textContent: 'Load' });
       load.addEventListener('click', async () => {
         const loaded = await api.loadProfile(n);
-        if (loaded) { applyNewConfig(loaded); setCurName(n); toast('Loaded \u201c' + n + '\u201d'); }
+        if (loaded) { closePops(); applyNewConfig(loaded); setCurName(n); fitMode = true; updateZoom(); toast('Loaded \u201c' + n + '\u201d'); }
       });
+      if (n === curName) row.classList.add('current');
+      const hk = (state.profileHotkeys || {})[n];
+      if (hk) row.appendChild(mk('kbd', { textContent: hk, title: 'Hotkey' }));
       const del = mk('button', { textContent: 'Delete', className: 'danger' });
       del.addEventListener('click', () => api.deleteProfile(n));
       row.appendChild(load);
@@ -1296,11 +2005,15 @@
 
   // ---------------------------------------------------------------- home
   let homePrev = null;
+  let lastActive = null;
   let curName = '';
 
   function setCurName(n) {
     curName = n || '';
+    const el = $('#profileName');
+    if (el && el.value !== curName) el.value = curName;
     renderHome();
+    updateSavedState();
   }
 
   function renderHome() {
@@ -1345,7 +2058,7 @@
 
   // Sets the app's accent color (CSS variables) and picks readable text for filled buttons.
   function applyAccent(hex) {
-    if (!/^#[0-9a-f]{6}$/i.test(hex || '')) hex = '#3ddc84';
+    if (!/^#[0-9a-f]{6}$/i.test(hex || '')) hex = '#fcc800';
     const n = parseInt(hex.slice(1), 16);
     const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
     const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
@@ -1371,7 +2084,7 @@
     });
     $('#accentPick').addEventListener('input', (e) => { applyAccent(e.target.value); });
     $('#accentPick').addEventListener('change', (e) => api.setSettings({ accentColor: e.target.value }));
-    $('#accentReset').addEventListener('click', () => api.setSettings({ accentColor: '#3ddc84' }));
+    $('#accentReset').addEventListener('click', () => api.setSettings({ accentColor: '#fcc800' }));
     applyAccent(state.accentColor);
   }
 
@@ -1883,7 +2596,14 @@
     design = viewOf(Crosshair.sanitizeDesign(state.crosshair), 'base');
     sel = 0;
 
-    preview = Crosshair.createController($('#previewCanvas'), { size: 340, zoom: 2 });
+    preview = Crosshair.createController($('#previewCanvas'), { size: 600, zoom: 2 });
+    realCtl = Crosshair.createController($('#realCanvas'), { size: 240, zoom: 1 });
+    const baseSet = preview.setConfig;
+    preview.setConfig = (c) => { baseSet(c); realCtl.setConfig(c); refreshSel(); };
+    updateReal();
+    initCanvasTools();
+    initTopBar();
+    initDesignerKeys();
     homePrev = Crosshair.createController($('#homePreview'), { size: 200, zoom: 3 });
     homePrev.setConfig(canon());
     buildControls();
@@ -1897,7 +2617,8 @@
     triggers = Crosshair.sanitizeTriggers(state.triggers);
     renderTriggers();
     wirePreviewPointer();
-    Crosshair.onAssetLoad(() => { renderLayersSoon(); });
+    Crosshair.onAssetLoad(() => { boundsCache.clear(); refreshSel(); renderLayersSoon(); });
+    requestAnimationFrame(resizeStage);
     $('#addLayerBtn').addEventListener('click', (e) => { e.stopPropagation(); $('#addMenu').hidden = !$('#addMenu').hidden; });
     document.querySelectorAll('#addMenu button').forEach((b) => b.addEventListener('click', () => addOfKind(b.dataset.kind)));
     document.addEventListener('click', (e) => { if (!e.target.closest('.add-wrap')) $('#addMenu').hidden = true; });
@@ -1921,12 +2642,6 @@
     }));
 
 
-    document.querySelectorAll('.bgs button[data-bg]').forEach((b) => {
-      b.addEventListener('click', () => {
-        $('#previewWrap').className = 'preview bg-' + b.dataset.bg;
-        $('#previewWrap').style.backgroundImage = '';
-      });
-    });
     initPreviewBg();
     renderPresets();
     initBackup();
@@ -1937,6 +2652,7 @@
         document.querySelectorAll('.tab-btn').forEach((x) => x.classList.toggle('active', x === b));
         document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + b.dataset.tab));
         if (b.dataset.tab === 'settings') refreshDisplays();
+        if (b.dataset.tab === 'crosshair') requestAnimationFrame(resizeStage);
       });
     });
 
@@ -1959,14 +2675,6 @@
       importFrom(text);
     });
 
-    $('#saveProfileBtn').addEventListener('click', async () => {
-      const name = $('#profileName').value.trim();
-      if (!name) { toast('Give it a name first'); return; }
-      const r = await api.saveProfile(name, canon());
-      if (r.ok) { toast('Saved \u201c' + name + '\u201d'); $('#profileName').value = ''; }
-      else toast('That name is not allowed');
-    });
-
     $('#overlayToggle').addEventListener('change', (e) => api.setOverlay(e.target.checked));
     $('#pill').addEventListener('click', () => api.setOverlay(!state.overlayVisible));
     $('#homeToggle').addEventListener('click', () => api.setOverlay(!state.overlayVisible));
@@ -1979,19 +2687,24 @@
     $('#shapeModal').addEventListener('mousedown', (ev) => { if (ev.target === $('#shapeModal')) closeShapePicker(); });
     document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && !$('#shapeModal').hidden) closeShapePicker(); });
 
+    if (state.activeProfile) { lastActive = state.activeProfile; setCurName(state.activeProfile); }
     renderProfiles();
     renderSettings();
     renderHomeGrid();
     refreshDisplays();
+    updateSavedState();
 
     api.onState((s) => {
       state = s;
       if (!customizing && s.triggers) { triggers = Crosshair.sanitizeTriggers(s.triggers); renderTriggers(); }
+      if (s.activeProfile && s.activeProfile !== lastActive) { lastActive = s.activeProfile; setCurName(s.activeProfile); }
       renderProfiles();
       renderSettings();
       renderHomeGrid();
+      updateReal();
+      updateSavedState();
     });
-    api.onInput((e) => { preview.input(e); if (homePrev) homePrev.input(e); });
+    api.onInput((e) => { preview.input(e); realInput(e); if (homePrev) homePrev.input(e); });
 
     initPros();
     initSettings();

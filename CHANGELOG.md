@@ -2,6 +2,18 @@
 
 Windows-first crosshair overlay built with Electron: a transparent, click-through, always-on-top overlay with a layered crosshair designer.
 
+## New Designer (redesign)
+- Three-panel layout in the EZGG matte black + yellow look: Layers on the left, a large canvas in the middle, the Inspector on the right, and a top bar with name, hotkey, saved status, New / Undo / Redo / Share / Save / Apply.
+- **Canvas editing**: click a layer to select it, drag to move, corner handles to resize, top handle to rotate (Shift = 15° steps). Grid and Snap toggles (Alt moves freely), zoom with −/+ or the mouse wheel, and Fit.
+- **Multi-select**: Shift/Ctrl-click layers in the list or on the canvas, Ctrl+A for all. Moving, rotating, hiding, duplicating, deleting and most inspector settings apply to every selected layer.
+- **Layer list**: drag to reorder, thumbnails, animation badge, eye toggle, double-click or F2 to rename, right-click menu (duplicate, hide, forward/backward, mirror, copy/paste style, delete).
+- **1:1 in-game preview**: a floating card shows the crosshair at real size (times your overlay scale) over game-style backgrounds or your own screenshot; ‹ › switches backgrounds.
+- **Animation strip** under the canvas: "Animate this layer" opens one card per animation (effect, when, mode, easing curve, strength, speed, hold-to-test). Dynamic spread and Color rules moved here as tabs.
+- **Per-crosshair hotkeys**: give a saved crosshair its own hotkey from the top bar to equip it in game.
+- Saved crosshairs moved into the dropdown next to the name; the Save button saves under that name (Ctrl+S).
+- Shortcuts: Ctrl+D duplicate, Delete, H hide, G grid, F fit, Ctrl+[ / Ctrl+] reorder, arrow keys nudge.
+- Default accent is now EZGG yellow.
+
 ## Core
 - Transparent click-through always-on-top overlay, tray icon, global hotkeys (toggle / next / previous crosshair).
 - Display modes (borderless, fullscreen) and overlay scale.

@@ -101,6 +101,20 @@ function cleanGames(g) {
   return out;
 }
 
+// Hotkeys that equip a saved crosshair: { profileName: 'Accelerator' }.
+function cleanProfileHotkeys(raw, profiles) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  const used = new Set();
+  for (const [k, v] of Object.entries(raw)) {
+    if (!Object.prototype.hasOwnProperty.call(profiles, k)) continue;
+    if (typeof v !== 'string' || !v || v.length > 40 || used.has(v)) continue;
+    used.add(v);
+    out[k] = v;
+  }
+  return out;
+}
+
 function loadConfig() {
   let raw = {};
   try {
@@ -128,7 +142,7 @@ function loadConfig() {
     fpsCap: [0, 30, 60, 120].indexOf(raw.fpsCap) >= 0 ? raw.fpsCap : 60,
     lowPriority: raw.lowPriority !== false,
     startHidden: !!raw.startHidden,
-    accentColor: /^#[0-9a-f]{6}$/i.test(raw.accentColor || '') ? raw.accentColor.toLowerCase() : '#3ddc84',
+    accentColor: /^#[0-9a-f]{6}$/i.test(raw.accentColor || '') ? raw.accentColor.toLowerCase() : '#fcc800',
     memoryMode: ['balanced', 'low', 'lowest'].indexOf(raw.memoryMode) >= 0 ? raw.memoryMode : 'low',
     overlayVisible: raw.overlayVisible !== false,
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey ? raw.hotkey : 'F8',
@@ -140,6 +154,7 @@ function loadConfig() {
     autoRevert: raw.autoRevert !== false,
     followWindow: !!raw.followWindow,
     gameProfiles: cleanGames(raw.gameProfiles),
+    profileHotkeys: cleanProfileHotkeys(raw.profileHotkeys, profiles),
     profiles
   };
 }
@@ -185,6 +200,8 @@ function publicState() {
     guide: guideOn,
     watcherOn: !!watcher,
     profiles: config.profiles,
+    profileHotkeys: config.profileHotkeys,
+    activeProfile,
     hookState,
     isPackaged: app.isPackaged
   };
@@ -429,6 +446,50 @@ function registerHotkeys() {
     if (!accel) return;
     try { globalShortcut.register(accel, actions[field]); } catch (e) { /* invalid accelerator */ }
   });
+  const taken = new Set(Object.keys(actions).map((f) => config[f]));
+  Object.keys(config.profileHotkeys || {}).forEach((name) => {
+    const accel = config.profileHotkeys[name];
+    if (!accel || taken.has(accel) || !Object.prototype.hasOwnProperty.call(config.profiles, name)) return;
+    try {
+      globalShortcut.register(accel, () => {
+        if (!Object.prototype.hasOwnProperty.call(config.profiles, name)) return;
+        applyDesign(config.profiles[name], name);
+        broadcastState();
+      });
+    } catch (e) { /* invalid accelerator */ }
+  });
+}
+
+function setProfileHotkey(name, accel) {
+  const n = String(name || '');
+  const done = (ok, error) => {
+    broadcastState();
+    return { ok, error, profileHotkeys: config.profileHotkeys };
+  };
+  if (!Object.prototype.hasOwnProperty.call(config.profiles, n)) return done(false, 'Save this crosshair first');
+  const map = Object.assign({}, config.profileHotkeys);
+  if (!accel) {
+    delete map[n];
+    config.profileHotkeys = map;
+    registerHotkeys();
+    saveSoon();
+    return done(true);
+  }
+  if (typeof accel !== 'string' || accel.length > 40) return done(false, 'Could not use that shortcut');
+  if (['hotkey', 'hotkeyNext', 'hotkeyPrev'].some((f) => config[f] === accel)) return done(false, accel + ' is already used by an app hotkey');
+  const other = Object.keys(map).find((k) => k !== n && map[k] === accel);
+  if (other) return done(false, accel + ' already equips \u201c' + other + '\u201d');
+  const prev = config.profileHotkeys;
+  map[n] = accel;
+  config.profileHotkeys = map;
+  registerHotkeys();
+  if (!globalShortcut.isRegistered(accel)) {
+    config.profileHotkeys = prev;
+    registerHotkeys();
+    return done(false, 'Windows would not give us ' + accel + ' (another app may own it)');
+  }
+  saveSoon();
+  return done(true);
 }
 
 function setHotkey(accel, which) {
@@ -670,6 +731,7 @@ function setupIpc() {
     const n = String(name || '').trim().slice(0, 40);
     if (!n || BLOCKED_NAMES.has(n)) return { ok: false };
     config.profiles[n] = Crosshair.sanitizeDesign(ch);
+    activeProfile = n;
     saveSoon();
     broadcastState();
     return { ok: true };
@@ -690,6 +752,7 @@ function setupIpc() {
   ipcMain.handle('profile:delete', (_e, name) => {
     const n = String(name || '');
     if (Object.prototype.hasOwnProperty.call(config.profiles, n)) delete config.profiles[n];
+    if (config.profileHotkeys && config.profileHotkeys[n]) { delete config.profileHotkeys[n]; registerHotkeys(); }
     saveSoon();
     broadcastState();
     return true;
@@ -717,6 +780,8 @@ function setupIpc() {
   });
 
   ipcMain.handle('hotkey:set', (_e, accel, which) => ({ ok: setHotkey(accel, which), hotkeys: { toggle: config.hotkey, next: config.hotkeyNext, prev: config.hotkeyPrev } }));
+
+  ipcMain.handle('profile:hotkey', (_e, name, accel) => setProfileHotkey(name, accel));
 
   ipcMain.handle('hotkey:pause', (_e, pause) => {
     if (pause) globalShortcut.unregisterAll();
