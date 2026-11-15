@@ -26,7 +26,9 @@ jobs:
       - run: npx electron-builder --win --dir --publish never
       - name: Check in-app update config
         shell: pwsh
-        run: if (!(Test-Path 'dist/win-unpacked/resources/app-update.yml')) { throw 'app-update.yml missing: in-app updates would not work' } else { Get-Content 'dist/win-unpacked/resources/app-update.yml' }
+        run: |
+          if (!(Test-Path 'dist/win-unpacked/resources/app-update.yml')) { throw 'app-update.yml is missing, so in-app updates would not work' }
+          Get-Content 'dist/win-unpacked/resources/app-update.yml'
 
       # 2. Sign EZ Reticle.exe inside it.
       - name: Upload program for signing
