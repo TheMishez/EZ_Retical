@@ -1,7 +1,7 @@
 {
   "name": "ez-reticle",
   "productName": "EZ Reticle",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Custom crosshair overlay and designer for Windows",
   "main": "main.js",
   "private": true,
@@ -34,13 +34,14 @@
       "package.json",
       "presets.js",
       "logo.png",
-      "logo-64.png"
+      "logo-64.png",
+      "previews/**"
     ],
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "icon": "icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -49,7 +50,7 @@
       "createDesktopShortcut": true,
       "artifactName": "EZ-Reticle-Setup-${version}.exe"
     },
-    "icon": "build/icon.png"
+    "icon": "icon.png"
   },
   "author": "EZGGco"
 }

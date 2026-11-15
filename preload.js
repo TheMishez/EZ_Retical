@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   saveProfile: (name, c) => ipcRenderer.invoke('profile:save', name, c),
   loadProfile: (name) => ipcRenderer.invoke('profile:load', name),
   deleteProfile: (name) => ipcRenderer.invoke('profile:delete', name),
+  setProfileHotkey: (name, accel) => ipcRenderer.invoke('profile:hotkey', name, accel),
   setOverlay: (v) => ipcRenderer.invoke('overlay:set', v),
   setDisplayMode: (m) => ipcRenderer.invoke('mode:set', m),
   setTriggers: (t) => ipcRenderer.invoke('triggers:set', t),
