@@ -15,6 +15,7 @@
       <button class="tab-btn" data-tab="pros"><svg viewBox="0 0 24 24"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.2 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/></svg>Pro Crosshairs</button>
       <button class="tab-btn" data-tab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
     </nav>
+    <button id="updateLine" class="update-line" type="button" hidden title="Open the download page"></button>
     <button id="pill" class="pill" title="Toggle the overlay"></button>
   </aside>
 
@@ -278,21 +279,32 @@
       <div class="card narrow">
         <h3>Appearance</h3>
         <div class="row"><span class="name">App accent color</span><span class="ctl"><span id="accentSwatches" class="accent-swatches"></span><input type="color" id="accentPick" title="Custom color"></span></div>
-        <div class="btns"><button id="accentReset">Reset to green</button></div>
+        <div class="btns"><button id="accentReset">Reset to EZGG yellow</button></div>
       </div>
       <div class="card narrow">
         <h3>Overlay</h3>
         <div class="row"><span class="name">Show crosshair overlay</span><span class="ctl"><input type="checkbox" id="overlayToggle"></span></div>
-        <div class="row"><span class="name">Toggle hotkey</span><span class="ctl"><button id="hotkeyBtn" class="hk" data-which="toggle"></button></span></div>
-        <div class="row"><span class="name">Next saved crosshair</span><span class="ctl"><button id="hotkeyNextBtn" class="hk" data-which="next"></button></span></div>
-        <div class="row"><span class="name">Previous saved crosshair</span><span class="ctl"><button id="hotkeyPrevBtn" class="hk" data-which="prev"></button></span></div>
         <div id="scaleHost"></div>
         <div id="opacityHost"></div>
         <div class="row"><span class="name">Display</span><span class="ctl"><select id="displaySel"></select></span></div>
-        <div class="row"><span class="name">Start hidden in tray</span><span class="ctl"><input type="checkbox" id="startHidden"></span></div>
-        <div class="row"><span class="name">Start with Windows</span><span class="ctl"><input type="checkbox" id="autoStart"></span></div>
-        <p id="autoStartNote" class="muted small"></p>
         <p id="hookWarn" class="warn" hidden>The global input hook could not be loaded, so click and WASD animations won't trigger over games. Run <code>npm install</code> again, or set Animation to None.</p>
+      </div>
+      <div class="card narrow">
+        <h3>Hotkeys</h3>
+        <p class="muted small">Work anywhere, even mid-match. Click a button, then press the keys. Backspace clears, Esc cancels.</p>
+        <div class="row"><span class="name">Show / hide crosshair</span><span class="ctl"><button id="hotkeyBtn" class="hk" data-which="toggle"></button></span></div>
+        <div class="row"><span class="name">Next saved crosshair</span><span class="ctl"><button id="hotkeyNextBtn" class="hk" data-which="next"></button></span></div>
+        <div class="row"><span class="name">Previous saved crosshair</span><span class="ctl"><button id="hotkeyPrevBtn" class="hk" data-which="prev"></button></span></div>
+        <h4 class="subhead">Saved crosshair hotkeys</h4>
+        <div id="profHkList" class="hk-list"></div>
+      </div>
+      <div class="card narrow">
+        <h3>Startup</h3>
+        <div class="row"><span class="name">Start with Windows</span><span class="ctl"><input type="checkbox" id="autoStart"></span></div>
+        <div class="row"><span class="name">Start minimized to the tray</span><span class="ctl"><input type="checkbox" id="startHidden"></span></div>
+        <div class="row"><span class="name">Only show the crosshair while a game is in front</span><span class="ctl"><input type="checkbox" id="gameOnly"></span></div>
+        <p id="autoStartNote" class="muted small"></p>
+        <p id="gameOnlyNote" class="muted small"></p>
       </div>
       <div class="card narrow">
         <h3>Alignment</h3>
@@ -306,8 +318,8 @@
         <p class="muted small" id="alignDiag">&nbsp;</p>
       </div>
       <div class="card narrow">
-        <h3>Per-game crosshairs</h3>
-        <p class="muted small">Pick a saved crosshair for each game. It switches automatically when that game is in front. Windows only. Needs at least one game below.</p>
+        <h3>Games</h3>
+        <p class="muted small">Add the games you play. Pick a saved crosshair to switch to it automatically when that game is in front, or <b>Keep current crosshair</b> if you only want the game listed (for &ldquo;Only show while a game is in front&rdquo;). Windows only.</p>
         <div class="row"><span class="name">Switch crosshair automatically</span><span class="ctl"><input type="checkbox" id="autoSwitch"></span></div>
         <div class="row"><span class="name">Go back to my crosshair when I leave the game</span><span class="ctl"><input type="checkbox" id="autoRevert"></span></div>
         <div class="row"><span class="name">Centre on the game window (windowed games)</span><span class="ctl"><input type="checkbox" id="followWindow"></span></div>
@@ -356,6 +368,12 @@
       <div class="card narrow">
         <h3>Compatibility</h3>
         <p class="muted small">The crosshair is a separate transparent window drawn on top of everything. It always shows over <b>borderless windowed</b> and windowed games. For games set to <b>Fullscreen</b>, pick <b>Fullscreen games</b> under Display mode on the Home tab; that works as long as Windows&rsquo; fullscreen optimizations are on for the game (the default). True exclusive fullscreen can still hide it.</p>
+      </div>
+      <div class="card narrow">
+        <h3>Updates</h3>
+        <div class="row"><span class="name">Check GitHub for new versions</span><span class="ctl"><input type="checkbox" id="checkUpdates"></span></div>
+        <p class="muted small" id="updateNote"></p>
+        <div class="btns"><button id="updateCheckBtn">Check now</button><button id="updateOpenBtn">Open releases page</button></div>
       </div>
       <div class="card narrow">
         <h3>Backup</h3>

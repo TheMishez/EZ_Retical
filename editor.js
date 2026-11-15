@@ -2095,6 +2095,12 @@
     $('#hotkeyNextBtn').textContent = state.hotkeyNext;
     $('#hotkeyPrevBtn').textContent = state.hotkeyPrev;
     $('#startHidden').checked = !!state.startHidden;
+    $('#gameOnly').checked = !!state.gameOnly;
+    const nGames = Object.keys(state.gameProfiles || {}).length;
+    $('#gameOnlyNote').textContent = !state.gameOnly ? 'Tip: with all three on, EZ Reticle waits quietly in the tray and the crosshair pops up when your game is in front.'
+      : (nGames ? (state.gameFront ? 'A game is in front: crosshair showing.' : 'Waiting for one of your games (' + Object.keys(state.gameProfiles).join(', ') + ').') : 'Add your game under Games below, or the crosshair stays hidden.');
+    renderProfileHotkeys();
+    renderUpdate();
     $('#lowPriority').checked = state.lowPriority !== false;
     $('#fpsSel').value = String(state.fpsCap === undefined ? 60 : state.fpsCap);
     if ($('#memSel')) {
@@ -2144,6 +2150,72 @@
     };
     let k = map[k0] || (k0.length === 1 ? k0.toUpperCase() : k0);
     return mods.concat(k).join('+');
+  }
+
+  // Click a button, press keys: Esc cancels, Backspace/Delete clears (done(null)).
+  function captureKeys(btn, done) {
+    if (btn.classList.contains('capturing')) return;
+    btn.classList.add('capturing');
+    btn.textContent = 'Press keys\u2026';
+    api.pauseHotkey(true);
+    const stop = () => { document.removeEventListener('keydown', onKey, true); btn.classList.remove('capturing'); };
+    function onKey(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { stop(); api.pauseHotkey(false); renderSettings(); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') { stop(); done(null); return; }
+      const acc = toAccelerator(e);
+      if (!acc) return;
+      stop();
+      done(acc);
+    }
+    document.addEventListener('keydown', onKey, true);
+  }
+
+  function renderProfileHotkeys() {
+    const host = $('#profHkList');
+    if (!host) return;
+    host.textContent = '';
+    const names = Object.keys(state.profiles || {}).sort((a, b) => a.localeCompare(b));
+    const map = state.profileHotkeys || {};
+    if (!names.length) {
+      host.appendChild(mk('p', { className: 'muted small', textContent: 'Save a crosshair in the Designer and it shows up here, ready for its own hotkey.' }));
+      return;
+    }
+    names.forEach((n) => {
+      const row = mk('div', { className: 'row' });
+      row.appendChild(mk('span', { className: 'name', textContent: n }));
+      const ctl = mk('span', { className: 'ctl' });
+      const b = mk('button', { type: 'button', className: 'hk' + (map[n] ? '' : ' unbound'), textContent: map[n] || 'Set hotkey' });
+      b.addEventListener('click', () => captureKeys(b, (acc) => {
+        api.setProfileHotkey(n, acc).then((r) => {
+          if (r && r.profileHotkeys) state.profileHotkeys = r.profileHotkeys;
+          if (r && !r.ok) toast(r.error || 'Could not use that shortcut');
+          else toast(acc ? acc + ' now equips \u201c' + n + '\u201d' : 'Hotkey removed');
+          if (!acc || !r || !r.ok) api.pauseHotkey(false);
+          renderSettings();
+        });
+      }));
+      ctl.appendChild(b);
+      if (map[n]) {
+        const x = mk('button', { type: 'button', className: 'x', title: 'Remove hotkey', textContent: '\u00d7' });
+        x.addEventListener('click', () => api.setProfileHotkey(n, null).then((r) => { if (r && r.profileHotkeys) state.profileHotkeys = r.profileHotkeys; renderSettings(); }));
+        ctl.appendChild(x);
+      }
+      row.appendChild(ctl);
+      host.appendChild(row);
+    });
+  }
+
+  function renderUpdate() {
+    const u = state.update;
+    const line = $('#updateLine');
+    if (line) {
+      line.hidden = !u;
+      if (u) line.textContent = 'New version available: v' + u.version + ' \u2192';
+    }
+    if ($('#checkUpdates')) $('#checkUpdates').checked = state.checkUpdates !== false;
+    if ($('#updateNote')) $('#updateNote').textContent = u ? 'Version ' + u.version + ' is out. You have ' + state.version + '.' : 'You have version ' + (state.version || '?') + '.';
   }
 
   function wireHotkeyCapture() {
@@ -2228,7 +2300,8 @@
       const row = mk('div', { className: 'grow' });
       row.appendChild(mk('b', { textContent: exe }));
       const sel = mk('select');
-      const names = profNames.indexOf(games[exe]) >= 0 ? profNames : profNames.concat([games[exe]]);
+      const names = games[exe] === '*' || profNames.indexOf(games[exe]) >= 0 ? profNames : profNames.concat([games[exe]]);
+      sel.appendChild(mk('option', { value: '*', textContent: 'Keep current crosshair' }));
       names.forEach((n) => sel.appendChild(mk('option', { value: n, textContent: n })));
       sel.value = games[exe];
       sel.addEventListener('change', () => api.setGames({ gameProfiles: Object.assign({}, games, { [exe]: sel.value }) }));
@@ -2245,12 +2318,11 @@
     const gp = $('#gameProf');
     const keep = gp.value;
     gp.textContent = '';
+    gp.appendChild(mk('option', { value: '*', textContent: 'Keep current crosshair' }));
     profNames.forEach((n) => gp.appendChild(mk('option', { value: n, textContent: n })));
-    if (keep && profNames.indexOf(keep) >= 0) gp.value = keep;
-    $('#gameAdd').disabled = !profNames.length;
-    $('#gameNote').textContent = profNames.length
-      ? (state.watcherOn ? 'Watching the active window.' : '')
-      : 'Save at least one crosshair first (Crosshair tab, Saved crosshairs), then pick it here.';
+    if (keep && (keep === '*' || profNames.indexOf(keep) >= 0)) gp.value = keep;
+    $('#gameAdd').disabled = false;
+    $('#gameNote').textContent = state.watcherOn ? 'Watching the active window.' : '';
   }
 
   function initGames() {
@@ -2313,6 +2385,19 @@
     initGames();
     initAccent();
     $('#startHidden').addEventListener('change', (e) => api.setSettings({ startHidden: e.target.checked }));
+    $('#gameOnly').addEventListener('change', (e) => {
+      api.setGames({ gameOnly: e.target.checked });
+      if (e.target.checked && !Object.keys(state.gameProfiles || {}).length) toast('Now add your game under Games so the crosshair knows when to show');
+    });
+    $('#checkUpdates').addEventListener('change', (e) => api.setCheckUpdates(e.target.checked));
+    $('#updateCheckBtn').addEventListener('click', async () => {
+      $('#updateCheckBtn').disabled = true;
+      const r = await api.checkUpdate();
+      $('#updateCheckBtn').disabled = false;
+      toast(!r || !r.ok ? 'Could not reach GitHub' : (r.update ? 'Version ' + r.update.version + ' is available' : 'You\u2019re on the latest version'));
+    });
+    $('#updateOpenBtn').addEventListener('click', () => api.openUpdate());
+    $('#updateLine').addEventListener('click', () => api.openUpdate());
     $('#lowPriority').addEventListener('change', (e) => api.setSettings({ lowPriority: e.target.checked }));
     $('#fpsSel').addEventListener('change', (e) => api.setSettings({ fpsCap: Number(e.target.value) }));
     $('#memSel').addEventListener('change', (e) => api.setSettings({ memoryMode: e.target.value }));
