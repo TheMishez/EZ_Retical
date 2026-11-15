@@ -7,23 +7,82 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # Code signing turns on by itself once the SIGNPATH_API_TOKEN secret exists (see docs/SIGNING.md).
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: npm install
-      - run: npx electron-builder --win --publish never
+
+      # 1. Build the program folder (not the installer yet).
+      - run: npx electron-builder --win --dir --publish never
+
+      # 2. Sign EZ Reticle.exe inside it.
+      - name: Upload program for signing
+        if: env.SIGN == 'true'
+        id: app-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-app
+          path: dist/win-unpacked
+      - name: Sign program
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'EZ_Retical' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.app-upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist/win-unpacked
+
+      # 3. Wrap it in the installer (also writes latest.yml for in-app updates).
+      - run: npx electron-builder --win nsis --prepackaged dist/win-unpacked --publish never
+
+      # 4. Sign the installer itself.
+      - name: Upload installer for signing
+        if: env.SIGN == 'true'
+        id: setup-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: dist/*.exe
+      - name: Sign installer
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'EZ_Retical' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.setup-upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: dist
+      - run: node tools/fix-latest-yml.js
+
       - uses: actions/upload-artifact@v4
         with:
           name: EZ-Reticle-Setup
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
       - name: Attach to the GitHub release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml

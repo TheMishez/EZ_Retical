@@ -284,6 +284,8 @@
       <div class="card narrow">
         <h3>Overlay</h3>
         <div class="row"><span class="name">Show crosshair overlay</span><span class="ctl"><input type="checkbox" id="overlayToggle"></span></div>
+        <div class="row"><span class="name">Hide from recordings and streams</span><span class="ctl"><input type="checkbox" id="hideCapture"></span></div>
+        <p class="muted small">Keeps the crosshair out of OBS, Discord screen share, clips and screenshots. You still see it. Leave it off if you want viewers to see it.</p>
         <div id="scaleHost"></div>
         <div id="opacityHost"></div>
         <div class="row"><span class="name">Display</span><span class="ctl"><select id="displaySel"></select></span></div>
@@ -373,7 +375,7 @@
         <h3>Updates</h3>
         <div class="row"><span class="name">Check GitHub for new versions</span><span class="ctl"><input type="checkbox" id="checkUpdates"></span></div>
         <p class="muted small" id="updateNote"></p>
-        <div class="btns"><button id="updateCheckBtn">Check now</button><button id="updateOpenBtn">Open releases page</button></div>
+        <div class="btns"><button id="updateInstallBtn" class="primary" hidden>Download and install</button><button id="updateCheckBtn">Check now</button><button id="updateOpenBtn">Open releases page</button></div>
       </div>
       <div class="card narrow">
         <h3>Backup</h3>
@@ -385,7 +387,7 @@
       </div>
       <div class="card narrow">
         <h3>Reset</h3>
-        <button id="resetBtn">Reset crosshair to defaults</button>
+        <div class="btns"><button id="runSetupBtn">Run the setup guide again</button><button id="resetBtn">Reset crosshair to defaults</button></div>
       </div>
     </section>
   </main>
@@ -398,6 +400,58 @@
   </div>
 
   <div id="toast" class="toast"></div>
+
+  <div id="welcome" class="wz" hidden>
+    <div class="wz-card" role="dialog" aria-modal="true" aria-labelledby="wzTitle">
+      <div class="wz-head">
+        <img src="logo-64.png" alt="">
+        <div><b id="wzTitle">Welcome to EZ Reticle</b><span id="wzStepLbl">Step 1 of 3</span></div>
+        <span class="wz-sp"></span>
+        <button id="wzSkip" type="button" class="wz-skip">Skip</button>
+      </div>
+      <div class="wz-dots"><i class="on"></i><i></i><i></i></div>
+
+      <section class="wz-step" data-step="1">
+        <h2>Which game do you play?</h2>
+        <p class="muted">We&rsquo;ll set the overlay up for it. You can add more later in Settings &rsaquo; Games.</p>
+        <div id="wzGames" class="wz-chips"></div>
+        <div class="wz-other">
+          <input id="wzExe" type="text" placeholder="Other game: process name, e.g. cs2" spellcheck="false">
+          <button id="wzPick" type="button">Pick from running apps&hellip;</button>
+          <select id="wzPickSel" hidden></select>
+        </div>
+        <h3>How do you run it?</h3>
+        <div class="wz-modes">
+          <button type="button" class="wz-mode" data-mode="fullscreen"><b>Fullscreen</b><span>Most players. The crosshair stays on top of the game.</span></button>
+          <button type="button" class="wz-mode" data-mode="borderless"><b>Windowed or borderless</b><span>Lowest overhead.</span></button>
+        </div>
+      </section>
+
+      <section class="wz-step" data-step="2" hidden>
+        <h2>Pick a crosshair</h2>
+        <p class="muted">Start from one of these, or paste a code. You can change everything in the Designer.</p>
+        <div id="wzPresets" class="wz-presets"></div>
+        <div class="wz-other">
+          <input id="wzCode" type="text" placeholder="Paste a CS2 crosshair code (CSGO-&hellip;) or an EZ Reticle code (XH1:&hellip;)" spellcheck="false">
+          <button id="wzCodeBtn" type="button">Use code</button>
+        </div>
+      </section>
+
+      <section class="wz-step" data-step="3" hidden>
+        <h2>Last bits</h2>
+        <div class="wz-row"><div><b>Show / hide hotkey</b><span>Press it any time, even mid-match.</span></div><button id="wzHotkey" type="button" class="hk"></button></div>
+        <label class="wz-row"><div><b>Only show while my game is in front</b><span>Hides the crosshair on the desktop and in other apps.</span></div><input type="checkbox" id="wzGameOnly" checked></label>
+        <label class="wz-row" id="wzAutoRow"><div><b>Start with Windows, minimized to the tray</b><span>The crosshair is ready whenever you launch your game.</span></div><input type="checkbox" id="wzAuto" checked></label>
+        <label class="wz-row"><div><b>Hide from recordings and streams</b><span>Viewers won&rsquo;t see it; you still do.</span></div><input type="checkbox" id="wzCapture"></label>
+      </section>
+
+      <div class="wz-foot">
+        <button id="wzBack" type="button">Back</button>
+        <span class="wz-sp"></span>
+        <button id="wzNext" type="button" class="primary">Next</button>
+      </div>
+    </div>
+  </div>
 
   <script src="crosshair.js"></script>
   <script src="sharecode.js"></script>

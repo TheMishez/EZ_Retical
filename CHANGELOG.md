@@ -6,7 +6,10 @@ Windows-first crosshair overlay built with Electron: a transparent, click-throug
 - **Saved crosshair hotkeys** in Settings > Hotkeys: give every saved crosshair its own key to swap mid-match, next to Show/hide, Next and Previous.
 - **Startup** card: Start with Windows, Start minimized to the tray, and the new **Only show the crosshair while a game is in front**. With all three on, EZ Reticle waits in the tray and the crosshair appears when your game is focused.
 - Games list: add a game with **Keep current crosshair** to use it just for showing/hiding (no automatic switch).
-- **Update checker**: a line in the sidebar (and the tray menu) says when a newer version is on GitHub Releases, with a link to it. Settings > Updates can turn it off or check now. Nothing downloads on its own.
+- **In-app updates**: a line in the sidebar (and the tray menu) says when a newer version is on GitHub Releases. Click it to download in the background, then click again to restart into the new version. Settings > Updates can turn checks off, check now, or open the releases page. Nothing downloads until you click.
+- **Hide from recordings and streams** (Settings > Overlay): keeps the crosshair out of OBS, Discord screen share, clips and screenshots while you still see it.
+- **First-run setup guide**: pick your game and fullscreen/borderless, pick a crosshair (or paste a CS2 / EZ code), set the hotkey and startup options. Run it again from Settings > Reset.
+- Release builds are ready for free code signing through SignPath Foundation (see docs/SIGNING.md); they stay unsigned until it's set up.
 
 ## v1.1.0: New Designer
 - Three-panel layout in the EZGG matte black + yellow look: Layers on the left, a large canvas in the middle, the Inspector on the right, and a top bar with name, hotkey, saved status, New / Undo / Redo / Share / Save / Apply.

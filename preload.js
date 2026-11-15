@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('api', {
   setCheckUpdates: (on) => ipcRenderer.invoke('update:set', on),
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   openUpdate: () => ipcRenderer.invoke('update:open'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
   setOverlay: (v) => ipcRenderer.invoke('overlay:set', v),
   setDisplayMode: (m) => ipcRenderer.invoke('mode:set', m),
   setTriggers: (t) => ipcRenderer.invoke('triggers:set', t),

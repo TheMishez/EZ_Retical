@@ -157,6 +157,8 @@ function loadConfig() {
     overlayOffsetY: Math.round(clampNum(raw.overlayOffsetY, -100, 100, 0)),
     autoSwitch: !!raw.autoSwitch,
     gameOnly: !!raw.gameOnly,
+    hideFromCapture: !!raw.hideFromCapture,
+    onboarded: !!raw.onboarded,
     checkUpdates: raw.checkUpdates !== false,
     autoRevert: raw.autoRevert !== false,
     followWindow: !!raw.followWindow,
@@ -202,9 +204,11 @@ function publicState() {
     overlayOffsetY: config.overlayOffsetY,
     autoSwitch: config.autoSwitch,
     gameOnly: config.gameOnly,
+    hideFromCapture: config.hideFromCapture,
+    onboarded: config.onboarded,
     gameFront,
     checkUpdates: config.checkUpdates,
-    update: updateInfo,
+    update: publicUpdate(),
     version: app.getVersion(),
     autoRevert: config.autoRevert,
     followWindow: config.followWindow,
@@ -378,8 +382,15 @@ function createOverlay() {
   });
   overlayWin.setIgnoreMouseEvents(true);
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
+  applyCaptureProtection();
   overlayWin.loadFile(path.join(__dirname, 'overlay.html'));
   overlayWin.once('ready-to-show', applyOverlayVisibility);
+}
+
+// Keeps the crosshair out of OBS, Discord screen share and screenshots when asked (Windows 10 2004+).
+function applyCaptureProtection() {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  try { overlayWin.setContentProtection(!!config.hideFromCapture); } catch (e) { logError(e); }
 }
 
 function setOverlayVisible(v) {
@@ -444,7 +455,9 @@ function updateTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open editor', click: showEditor },
     { label: config.overlayVisible ? 'Hide crosshair' : 'Show crosshair', click: toggleOverlay },
-    ...(updateInfo ? [{ type: 'separator' }, { label: 'Update available: v' + updateInfo.version, click: () => shell.openExternal(updateInfo.url) }] : []),
+    ...(updateInfo ? [{ type: 'separator' }, updatePhase === 'ready'
+      ? { label: 'Restart to update to v' + updateInfo.version, click: installUpdate }
+      : { label: 'Update available: v' + updateInfo.version, click: () => { if (updateInfo.canInstall) { showEditor(); downloadUpdate(); } else shell.openExternal(updateInfo.url); } }] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ]));
@@ -819,6 +832,8 @@ function setupIpc() {
     if ('fpsCap' in p && [0, 30, 60, 120].indexOf(p.fpsCap) >= 0) config.fpsCap = p.fpsCap;
     if ('lowPriority' in p) config.lowPriority = !!p.lowPriority;
     if ('startHidden' in p) config.startHidden = !!p.startHidden;
+    if ('onboarded' in p) config.onboarded = !!p.onboarded;
+    if ('hideFromCapture' in p) { config.hideFromCapture = !!p.hideFromCapture; applyCaptureProtection(); }
     if ('accentColor' in p && /^#[0-9a-f]{6}$/i.test(String(p.accentColor))) config.accentColor = String(p.accentColor).toLowerCase();
     if ('memoryMode' in p && ['balanced', 'low', 'lowest'].indexOf(p.memoryMode) >= 0) config.memoryMode = p.memoryMode;
     let moved = false;
@@ -862,6 +877,8 @@ function setupIpc() {
   });
   ipcMain.handle('update:check', () => checkForUpdate(true));
   ipcMain.handle('update:open', () => { shell.openExternal(updateInfo ? updateInfo.url : RELEASES_PAGE); return true; });
+  ipcMain.handle('update:download', () => downloadUpdate());
+  ipcMain.handle('update:install', () => installUpdate());
 
   ipcMain.handle('app:relaunch', () => {
     saveNow();
@@ -1031,10 +1048,75 @@ function isNewer(a, b) {
   return false;
 }
 
-// Asks GitHub for the latest release once at start and every 6 hours. Never downloads anything.
-function checkForUpdate(manual) {
+// Installed builds update in place with electron-updater (download on request, install on restart).
+// Running from source, or if a release has no latest.yml, it falls back to a link to the release page.
+let autoUpdater = null;
+let updatePhase = ''; // '', 'downloading', 'ready', 'error'
+let updatePercent = 0;
+function initAutoUpdater() {
+  if (!app.isPackaged || autoUpdater) return autoUpdater;
+  try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { logError(e); return null; }
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null;
+  autoUpdater.on('download-progress', (pr) => { updatePhase = 'downloading'; updatePercent = Math.round(pr.percent || 0); broadcastState(); });
+  autoUpdater.on('update-downloaded', () => { updatePhase = 'ready'; updatePercent = 100; updateTrayMenu(); broadcastState(); });
+  autoUpdater.on('error', (e) => { logError(e); if (updatePhase === 'downloading') { updatePhase = 'error'; broadcastState(); } });
+  return autoUpdater;
+}
+
+function publicUpdate() {
+  if (!updateInfo) return null;
+  return Object.assign({}, updateInfo, { phase: updatePhase, percent: updatePercent });
+}
+
+function downloadUpdate() {
+  if (!updateInfo || !updateInfo.canInstall || !autoUpdater) { shell.openExternal(updateInfo ? updateInfo.url : RELEASES_PAGE); return false; }
+  if (updatePhase === 'ready') { installUpdate(); return true; }
+  if (updatePhase === 'downloading') return true;
+  updatePhase = 'downloading';
+  updatePercent = 0;
+  broadcastState();
+  autoUpdater.downloadUpdate().catch((e) => { logError(e); updatePhase = 'error'; broadcastState(); });
+  return true;
+}
+
+function installUpdate() {
+  if (!autoUpdater || updatePhase !== 'ready') return false;
+  quitting = true;
+  setImmediate(() => autoUpdater.quitAndInstall(true, true));
+  return true;
+}
+
+async function checkWithUpdater() {
+  const u = initAutoUpdater();
+  if (!u) return null;
+  try {
+    const r = await u.checkForUpdates();
+    const v = r && r.updateInfo && r.updateInfo.version;
+    const latest = versionParts(v), mine = versionParts(app.getVersion());
+    if (latest && mine && isNewer(latest, mine)) {
+      updateInfo = { version: latest.join('.'), url: RELEASES_PAGE, canInstall: true };
+    } else if (updatePhase !== 'ready') {
+      updateInfo = null;
+    }
+    return { ok: true };
+  } catch (e) {
+    return null; // e.g. the release has no latest.yml: use the plain check instead
+  }
+}
+
+// Asks GitHub for the latest release once at start and every 6 hours.
+async function checkForUpdate(manual) {
+  if (!config.checkUpdates && !manual) return null;
+  if (updatePhase === 'downloading' || updatePhase === 'ready') return { ok: true, update: publicUpdate() };
+  const viaUpdater = await checkWithUpdater();
+  if (viaUpdater) { updateTrayMenu(); broadcastState(); return { ok: true, update: publicUpdate() }; }
+  return checkLatestRelease();
+}
+
+function checkLatestRelease() {
   return new Promise((resolve) => {
-    if (!config.checkUpdates && !manual) { resolve(null); return; }
     const req = https.get(RELEASES_API, { headers: { 'User-Agent': 'EZ-Reticle/' + app.getVersion(), Accept: 'application/vnd.github+json' }, timeout: 10000 }, (res) => {
       let body = '';
       res.setEncoding('utf8');
@@ -1051,12 +1133,12 @@ function checkForUpdate(manual) {
           updateInfo = r;
           updateTrayMenu();
           broadcastState();
-          resolve({ ok: res.statusCode === 200, update: r });
-        } catch (e) { resolve({ ok: false, update: updateInfo }); }
+          resolve({ ok: res.statusCode === 200, update: publicUpdate() });
+        } catch (e) { resolve({ ok: false, update: publicUpdate() }); }
       });
     });
     req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve({ ok: false, update: updateInfo }));
+    req.on('error', () => resolve({ ok: false, update: publicUpdate() }));
   });
 }
 
