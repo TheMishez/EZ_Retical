@@ -24,11 +24,16 @@ jobs:
 
       # 1. Build the program folder (not the installer yet).
       - run: npx electron-builder --win --dir --publish never
-      - name: Check in-app update config
+      # electron-builder only writes app-update.yml when it builds the installer in one go,
+      # so write it here; the installer step then packs it in. electron-updater reads it.
+      - name: Add in-app update config
         shell: pwsh
         run: |
-          if (!(Test-Path 'dist/win-unpacked/resources/app-update.yml')) { throw 'app-update.yml is missing, so in-app updates would not work' }
-          Get-Content 'dist/win-unpacked/resources/app-update.yml'
+          $f = 'dist/win-unpacked/resources/app-update.yml'
+          if (!(Test-Path $f)) {
+            "owner: TheMishez`nrepo: EZ_Retical`nprovider: github`nreleaseType: release`nupdaterCacheDirName: ez-reticle-updater`n" | Set-Content -NoNewline -Encoding utf8NoBOM $f
+          }
+          Get-Content $f
 
       # 2. Sign EZ Reticle.exe inside it.
       - name: Upload program for signing
