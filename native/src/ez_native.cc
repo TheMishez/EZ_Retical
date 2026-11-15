@@ -19,6 +19,7 @@
 //   inputStop()
 //   foregroundStart(cb(line)) -> bool                    line: "name|x|y|w|h"
 //   foregroundStop()
+//   setEfficiency(pid, on) -> bool   Windows "Efficiency mode" (EcoQoS) for one of our processes
 
 #include <windows.h>
 #include <node_api.h>
@@ -425,12 +426,54 @@ void Cleanup(void*) {
   if (g_thread.joinable()) g_thread.join();
 }
 
+// Same as Task Manager's "Efficiency mode" (with idle priority, which JS sets): Windows runs the
+// process on efficient cores / low clocks. Resolved at runtime; needs Windows 10 1709+ (11 for full effect).
+struct EzPowerThrottling {
+  ULONG Version;
+  ULONG ControlMask;
+  ULONG StateMask;
+};
+const int kProcessPowerThrottling = 4;          // PROCESS_INFORMATION_CLASS::ProcessPowerThrottling
+const ULONG kThrottleExecutionSpeed = 0x1;      // PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+const ULONG kThrottleIgnoreTimerRes = 0x4;      // PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION
+
+napi_value SetEfficiency(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2] = {nullptr, nullptr};
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  int32_t pid = 0;
+  bool on = false;
+  if (argc < 2 || napi_get_value_int32(env, argv[0], &pid) != napi_ok || napi_get_value_bool(env, argv[1], &on) != napi_ok ||
+      pid <= 0) {
+    return Bool(env, false);
+  }
+  typedef BOOL(WINAPI * SetInfoFn)(HANDLE, int, LPVOID, DWORD);
+  static SetInfoFn setInfo = nullptr;
+  static bool looked = false;
+  if (!looked) {
+    looked = true;
+    HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+    if (k32) setInfo = reinterpret_cast<SetInfoFn>(GetProcAddress(k32, "SetProcessInformation"));
+  }
+  if (!setInfo) return Bool(env, false);
+  HANDLE h = OpenProcess(PROCESS_SET_INFORMATION, FALSE, static_cast<DWORD>(pid));
+  if (!h) return Bool(env, false);
+  EzPowerThrottling st;
+  st.Version = 1;
+  st.ControlMask = kThrottleExecutionSpeed | kThrottleIgnoreTimerRes;
+  st.StateMask = on ? (kThrottleExecutionSpeed | kThrottleIgnoreTimerRes) : 0;
+  BOOL ok = setInfo(h, kProcessPowerThrottling, &st, sizeof(st));
+  CloseHandle(h);
+  return Bool(env, ok != FALSE);
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor props[] = {
       {"inputStart", nullptr, InputStart, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"inputStop", nullptr, InputStop, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"foregroundStart", nullptr, ForegroundStart, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"foregroundStop", nullptr, ForegroundStop, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"setEfficiency", nullptr, SetEfficiency, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   napi_define_properties(env, exports, sizeof(props) / sizeof(props[0]), props);
   napi_add_env_cleanup_hook(env, Cleanup, nullptr);

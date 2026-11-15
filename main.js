@@ -436,11 +436,13 @@ function createEditor() {
   editorWin.loadFile(path.join(__dirname, 'editor.html'));
   editorWin.once('ready-to-show', () => editorWin.show());
   // Closing the editor fully unloads it (frees its memory); the overlay keeps running from the tray.
-  editorWin.on('closed', () => { editorWin = null; syncHook(); });
-  editorWin.on('show', syncHook);
-  editorWin.on('hide', syncHook);
-  editorWin.on('minimize', syncHook);
-  editorWin.on('restore', syncHook);
+  // Editor open/closed changes whether "Efficiency mode" applies, so re-apply priority too.
+  const onEditorState = () => { syncHook(); applyPriority(); };
+  editorWin.on('closed', () => { editorWin = null; onEditorState(); });
+  editorWin.on('show', onEditorState);
+  editorWin.on('hide', onEditorState);
+  editorWin.on('minimize', onEditorState);
+  editorWin.on('restore', onEditorState);
   editorWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   editorWin.webContents.on('will-navigate', (e) => e.preventDefault());
 }
@@ -1051,16 +1053,25 @@ function startTopTimer() {
 }
 
 // Runs every EZ Reticle process below normal priority so the game always wins the CPU.
+// While the crosshair is static and the editor is closed, also uses Windows "Efficiency mode"
+// (idle priority + EcoQoS), like Task Manager's toggle: a static overlay needs no CPU to stay on
+// screen, since Windows keeps compositing the last frame. Animations keep normal scheduling so
+// they stay smooth while a game loads the CPU.
 function applyPriority() {
-  const level = config.lowPriority ? os.constants.priority.PRIORITY_BELOW_NORMAL : os.constants.priority.PRIORITY_NORMAL;
+  const P = os.constants.priority;
+  const level = config.lowPriority ? P.PRIORITY_BELOW_NORMAL : P.PRIORITY_NORMAL;
+  const editorOpen = !!(editorWin && !editorWin.isDestroyed() && editorWin.isVisible() && !editorWin.isMinimized());
+  const eco = config.lowPriority && hookState !== 'running' && !editorOpen && Native.available;
   try {
     const pids = new Set([process.pid]);
     app.getAppMetrics().forEach((m) => pids.add(m.pid));
     pids.forEach((pid) => {
+      let lvl = eco ? P.PRIORITY_LOW : level; // PRIORITY_LOW = Windows idle priority class
       // The uiohook fallback runs its low-level hook in this process; Windows waits on that hook
       // for every mouse/key event, so it must not be starved by the game.
-      const lvl = pid === process.pid && hookKind === 'uiohook' ? os.constants.priority.PRIORITY_NORMAL : level;
+      if (pid === process.pid && hookKind === 'uiohook') lvl = P.PRIORITY_NORMAL;
       try { os.setPriority(pid, lvl); } catch (e) { /* not permitted */ }
+      Native.setEfficiency(pid, eco);
     });
   } catch (e) { /* ignore */ }
 }

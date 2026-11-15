@@ -79,6 +79,12 @@ function stopForeground() {
   if (binding) binding.foregroundStop();
 }
 
+// Windows "Efficiency mode" (EcoQoS) on/off for one process. Returns false when unsupported.
+function setEfficiency(pid, on) {
+  if (!binding || !binding.setEfficiency) return false;
+  try { return !!binding.setEfficiency(pid, !!on); } catch (e) { return false; }
+}
+
 module.exports = {
   available: !!binding,
   loadError,
@@ -86,5 +92,6 @@ module.exports = {
   startInput,
   stopInput,
   startForeground,
-  stopForeground
+  stopForeground,
+  setEfficiency
 };
