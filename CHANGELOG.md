@@ -8,6 +8,7 @@ Windows-first crosshair overlay built with Electron: a transparent, click-throug
 - Games list: add a game with **Keep current crosshair** to use it just for showing/hiding (no automatic switch).
 - **In-app updates**: a line in the sidebar (and the tray menu) says when a newer version is on GitHub Releases. Click it to download in the background, then click again to restart into the new version. Settings > Updates can turn checks off, check now, or open the releases page. Nothing downloads until you click.
 - **Hide from recordings and streams** (Settings > Overlay): keeps the crosshair out of OBS, Discord screen share, clips and screenshots while you still see it.
+- **Default crosshair** is now selectable: first in the Saved crosshairs dropdown and first in the starter presets.
 - **First-run setup guide**: pick your game and fullscreen/borderless, pick a crosshair (or paste a CS2 / EZ code), set the hotkey and startup options. Run it again from Settings > Reset.
 - Release builds are ready for free code signing through SignPath Foundation (see docs/SIGNING.md); they stay unsigned until it's set up.
 

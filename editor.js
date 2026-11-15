@@ -1631,7 +1631,7 @@
   function renderPresets() {
     const host = $('#presetGrid');
     host.textContent = '';
-    (window.PRESETS || []).forEach((p) => {
+    presetList().forEach((p) => {
       const d = Crosshair.sanitizeDesign({ layers: p.layers, dynamic: p.dynamic, rules: p.rules });
       const b = mk('button', { type: 'button', className: 'preset', title: 'Use ' + p.name });
       const c = mk('canvas', { width: 112, height: 112 });
@@ -1972,10 +1972,34 @@
   }
 
   // ---------------------------------------------------------------- profiles
+  function loadDefault() {
+    closePops();
+    applyNewConfig(Crosshair.DEFAULT_DESIGN);
+    setCurName('Default');
+    fitMode = true;
+    updateZoom();
+    toast('Back to the default crosshair');
+  }
+
+  // Starter presets with the built-in default first.
+  function presetList() {
+    return [{ name: 'Default', layers: Crosshair.DEFAULT_DESIGN.layers, dynamic: Crosshair.DEFAULT_DESIGN.dynamic, rules: Crosshair.DEFAULT_DESIGN.rules }].concat(window.PRESETS || []);
+  }
+
   function renderProfiles() {
     const list = $('#profileList');
     list.textContent = '';
     const names = Object.keys(state.profiles).sort((a, b) => a.localeCompare(b));
+    // The built-in default is always first, so you can get back to it in one click.
+    const dRow = mk('div', { className: 'prow default' });
+    const dc = mk('canvas', { width: 48, height: 48 });
+    drawThumb(dc, Crosshair.sanitizeDesign(Crosshair.DEFAULT_DESIGN));
+    dRow.appendChild(dc);
+    dRow.appendChild(mk('span', { className: 'pn', textContent: 'Default crosshair', title: 'The crosshair EZ Reticle starts with' }));
+    const dLoad = mk('button', { textContent: 'Load' });
+    dLoad.addEventListener('click', () => loadDefault());
+    dRow.appendChild(dLoad);
+    list.appendChild(dRow);
     if (!names.length) {
       list.appendChild(mk('div', { className: 'muted small', textContent: 'No saved crosshairs yet.' }));
       return;
@@ -2288,7 +2312,7 @@
   function renderWzPresets() {
     const host = $('#wzPresets');
     host.textContent = '';
-    (window.PRESETS || []).slice(0, WZ_PRESETS).forEach((p, i) => {
+    presetList().slice(0, WZ_PRESETS).forEach((p, i) => {
       const d = Crosshair.sanitizeDesign({ layers: p.layers, dynamic: p.dynamic, rules: p.rules });
       const b = mk('button', { type: 'button', className: 'preset' + (wz.picked === i ? ' on' : '') });
       const c = mk('canvas', { width: 96, height: 96 });
@@ -2927,7 +2951,7 @@
     $('#homeEdit').addEventListener('click', () => showTab('crosshair'));
     $('#displaySel').addEventListener('change', (e) => api.setDisplay(e.target.value === '' ? null : Number(e.target.value)));
     $('#autoStart').addEventListener('change', (e) => api.setAutoStart(e.target.checked));
-    $('#resetBtn').addEventListener('click', () => { applyNewConfig(Crosshair.DEFAULT_DESIGN); toast('Crosshair reset'); });
+    $('#resetBtn').addEventListener('click', () => loadDefault());
     wireHotkeyCapture();
     $('#shapeClose').addEventListener('click', closeShapePicker);
     $('#shapeModal').addEventListener('mousedown', (ev) => { if (ev.target === $('#shapeModal')) closeShapePicker(); });

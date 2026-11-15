@@ -637,3 +637,4 @@ main:has(#tab-crosshair.active) { padding: 12px; overflow: hidden; }
 .wz-row span { color: var(--muted); font-size: 12px; }
 .wz-row[hidden] { display: none; }
 .wz-foot { display: flex; align-items: center; margin-top: 22px; }
+.dz-pop .prow.default { border-style: dashed; }
