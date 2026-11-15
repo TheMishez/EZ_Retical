@@ -1631,7 +1631,7 @@
   function renderPresets() {
     const host = $('#presetGrid');
     host.textContent = '';
-    (window.PRESETS || []).forEach((p) => {
+    presetList().forEach((p) => {
       const d = Crosshair.sanitizeDesign({ layers: p.layers, dynamic: p.dynamic, rules: p.rules });
       const b = mk('button', { type: 'button', className: 'preset', title: 'Use ' + p.name });
       const c = mk('canvas', { width: 112, height: 112 });
@@ -1972,10 +1972,34 @@
   }
 
   // ---------------------------------------------------------------- profiles
+  function loadDefault() {
+    closePops();
+    applyNewConfig(Crosshair.DEFAULT_DESIGN);
+    setCurName('Default');
+    fitMode = true;
+    updateZoom();
+    toast('Back to the default crosshair');
+  }
+
+  // Starter presets with the built-in default first.
+  function presetList() {
+    return [{ name: 'Default', layers: Crosshair.DEFAULT_DESIGN.layers, dynamic: Crosshair.DEFAULT_DESIGN.dynamic, rules: Crosshair.DEFAULT_DESIGN.rules }].concat(window.PRESETS || []);
+  }
+
   function renderProfiles() {
     const list = $('#profileList');
     list.textContent = '';
     const names = Object.keys(state.profiles).sort((a, b) => a.localeCompare(b));
+    // The built-in default is always first, so you can get back to it in one click.
+    const dRow = mk('div', { className: 'prow default' });
+    const dc = mk('canvas', { width: 48, height: 48 });
+    drawThumb(dc, Crosshair.sanitizeDesign(Crosshair.DEFAULT_DESIGN));
+    dRow.appendChild(dc);
+    dRow.appendChild(mk('span', { className: 'pn', textContent: 'Default crosshair', title: 'The crosshair EZ Reticle starts with' }));
+    const dLoad = mk('button', { textContent: 'Load' });
+    dLoad.addEventListener('click', () => loadDefault());
+    dRow.appendChild(dLoad);
+    list.appendChild(dRow);
     if (!names.length) {
       list.appendChild(mk('div', { className: 'muted small', textContent: 'No saved crosshairs yet.' }));
       return;
@@ -2095,6 +2119,13 @@
     $('#hotkeyNextBtn').textContent = state.hotkeyNext;
     $('#hotkeyPrevBtn').textContent = state.hotkeyPrev;
     $('#startHidden').checked = !!state.startHidden;
+    $('#gameOnly').checked = !!state.gameOnly;
+    $('#hideCapture').checked = !!state.hideFromCapture;
+    const nGames = Object.keys(state.gameProfiles || {}).length;
+    $('#gameOnlyNote').textContent = !state.gameOnly ? 'Tip: with all three on, EZ Reticle waits quietly in the tray and the crosshair pops up when your game is in front.'
+      : (nGames ? (state.gameFront ? 'A game is in front: crosshair showing.' : 'Waiting for one of your games (' + Object.keys(state.gameProfiles).join(', ') + ').') : 'Add your game under Games below, or the crosshair stays hidden.');
+    renderProfileHotkeys();
+    renderUpdate();
     $('#lowPriority').checked = state.lowPriority !== false;
     $('#fpsSel').value = String(state.fpsCap === undefined ? 60 : state.fpsCap);
     if ($('#memSel')) {
@@ -2144,6 +2175,222 @@
     };
     let k = map[k0] || (k0.length === 1 ? k0.toUpperCase() : k0);
     return mods.concat(k).join('+');
+  }
+
+  // Click a button, press keys: Esc cancels, Backspace/Delete clears (done(null)).
+  function captureKeys(btn, done) {
+    if (btn.classList.contains('capturing')) return;
+    btn.classList.add('capturing');
+    btn.textContent = 'Press keys\u2026';
+    api.pauseHotkey(true);
+    const stop = () => { document.removeEventListener('keydown', onKey, true); btn.classList.remove('capturing'); };
+    function onKey(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { stop(); api.pauseHotkey(false); renderSettings(); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') { stop(); done(null); return; }
+      const acc = toAccelerator(e);
+      if (!acc) return;
+      stop();
+      done(acc);
+    }
+    document.addEventListener('keydown', onKey, true);
+  }
+
+  function renderProfileHotkeys() {
+    const host = $('#profHkList');
+    if (!host) return;
+    host.textContent = '';
+    const names = Object.keys(state.profiles || {}).sort((a, b) => a.localeCompare(b));
+    const map = state.profileHotkeys || {};
+    if (!names.length) {
+      host.appendChild(mk('p', { className: 'muted small', textContent: 'Save a crosshair in the Designer and it shows up here, ready for its own hotkey.' }));
+      return;
+    }
+    names.forEach((n) => {
+      const row = mk('div', { className: 'row' });
+      row.appendChild(mk('span', { className: 'name', textContent: n }));
+      const ctl = mk('span', { className: 'ctl' });
+      const b = mk('button', { type: 'button', className: 'hk' + (map[n] ? '' : ' unbound'), textContent: map[n] || 'Set hotkey' });
+      b.addEventListener('click', () => captureKeys(b, (acc) => {
+        api.setProfileHotkey(n, acc).then((r) => {
+          if (r && r.profileHotkeys) state.profileHotkeys = r.profileHotkeys;
+          if (r && !r.ok) toast(r.error || 'Could not use that shortcut');
+          else toast(acc ? acc + ' now equips \u201c' + n + '\u201d' : 'Hotkey removed');
+          if (!acc || !r || !r.ok) api.pauseHotkey(false);
+          renderSettings();
+        });
+      }));
+      ctl.appendChild(b);
+      if (map[n]) {
+        const x = mk('button', { type: 'button', className: 'x', title: 'Remove hotkey', textContent: '\u00d7' });
+        x.addEventListener('click', () => api.setProfileHotkey(n, null).then((r) => { if (r && r.profileHotkeys) state.profileHotkeys = r.profileHotkeys; renderSettings(); }));
+        ctl.appendChild(x);
+      }
+      row.appendChild(ctl);
+      host.appendChild(row);
+    });
+  }
+
+  function renderUpdate() {
+    const u = state.update;
+    const line = $('#updateLine');
+    if (line) {
+      line.hidden = !u;
+      line.classList.toggle('busy', !!u && u.phase === 'downloading');
+      if (u) {
+        line.textContent = u.phase === 'ready' ? 'Restart to update to v' + u.version + ' \u2713'
+          : u.phase === 'downloading' ? 'Downloading v' + u.version + '\u2026 ' + (u.percent || 0) + '%'
+          : u.phase === 'error' ? 'Update failed \u2013 open the download page'
+          : u.canInstall ? 'v' + u.version + ' is out \u2013 click to update'
+          : 'New version available: v' + u.version + ' \u2192';
+      }
+    }
+    const ib = $('#updateInstallBtn');
+    if (ib) {
+      ib.hidden = !(u && u.canInstall && u.phase !== 'error');
+      ib.textContent = u && u.phase === 'ready' ? 'Restart and update' : u && u.phase === 'downloading' ? 'Downloading\u2026 ' + (u.percent || 0) + '%' : 'Download and install';
+      ib.disabled = !!u && u.phase === 'downloading';
+    }
+    if ($('#checkUpdates')) $('#checkUpdates').checked = state.checkUpdates !== false;
+    if ($('#updateNote')) $('#updateNote').textContent = u ? 'Version ' + u.version + ' is out. You have ' + state.version + '.' : 'You have version ' + (state.version || '?') + '.';
+  }
+
+  // ---------------------------------------------------------------- first-run setup guide
+  const WZ_GAMES = [['cs2', 'Counter-Strike 2'], ['deadlock', 'Deadlock'], ['valorant', 'VALORANT'], ['r5apex', 'Apex Legends'], ['fortniteclient-win64-shipping', 'Fortnite'], ['overwatch', 'Overwatch 2'], ['rustclient', 'Rust'], ['tarkov', 'Escape from Tarkov']];
+  const WZ_PRESETS = 8;
+  const wz = { step: 1, games: new Set(), mode: '', picked: -1 };
+
+  function wzShow() {
+    document.querySelectorAll('.wz-step').forEach((sec) => { sec.hidden = Number(sec.dataset.step) !== wz.step; });
+    document.querySelectorAll('.wz-dots i').forEach((d, i) => d.classList.toggle('on', i < wz.step));
+    $('#wzStepLbl').textContent = 'Step ' + wz.step + ' of 3';
+    $('#wzBack').style.visibility = wz.step > 1 ? 'visible' : 'hidden';
+    $('#wzNext').textContent = wz.step === 3 ? 'Done – show my crosshair' : 'Next';
+    $('#wzHotkey').textContent = state.hotkey;
+    $('#wzAutoRow').hidden = !state.isPackaged;
+  }
+
+  function openWelcome() {
+    wz.step = 1;
+    wz.games = new Set(Object.keys(state.gameProfiles || {}));
+    wz.mode = state.displayMode || 'fullscreen';
+    wz.picked = -1;
+    renderWzGames();
+    document.querySelectorAll('.wz-mode').forEach((b) => b.classList.toggle('selected', b.dataset.mode === wz.mode));
+    $('#wzGameOnly').checked = true;
+    $('#wzAuto').checked = true;
+    $('#wzCapture').checked = !!state.hideFromCapture;
+    wzShow();
+    $('#welcome').hidden = false;
+  }
+
+  function closeWelcome() {
+    $('#welcome').hidden = true;
+    if (!state.onboarded) { state.onboarded = true; api.setSettings({ onboarded: true }); }
+  }
+
+  function renderWzGames() {
+    const host = $('#wzGames');
+    host.textContent = '';
+    const known = WZ_GAMES.map((g) => g[0]);
+    const all = WZ_GAMES.concat(Array.from(wz.games).filter((g) => known.indexOf(g) < 0).map((g) => [g, g]));
+    all.forEach((g) => {
+      const b = mk('button', { type: 'button', className: 'wz-chip' + (wz.games.has(g[0]) ? ' on' : ''), textContent: g[1] });
+      b.addEventListener('click', () => { if (wz.games.has(g[0])) wz.games.delete(g[0]); else wz.games.add(g[0]); renderWzGames(); });
+      host.appendChild(b);
+    });
+  }
+
+  function addWzExe(v) {
+    const exe = String(v || '').trim().toLowerCase().replace(/\.exe$/, '');
+    if (!exe) return;
+    wz.games.add(exe);
+    renderWzGames();
+  }
+
+  function renderWzPresets() {
+    const host = $('#wzPresets');
+    host.textContent = '';
+    presetList().slice(0, WZ_PRESETS).forEach((p, i) => {
+      const d = Crosshair.sanitizeDesign({ layers: p.layers, dynamic: p.dynamic, rules: p.rules });
+      const b = mk('button', { type: 'button', className: 'preset' + (wz.picked === i ? ' on' : '') });
+      const c = mk('canvas', { width: 96, height: 96 });
+      drawThumb(c, d);
+      b.appendChild(c);
+      b.appendChild(mk('span', { textContent: p.name }));
+      b.addEventListener('click', () => {
+        wz.picked = i;
+        applyNewConfig(d);
+        setCurName(p.name);
+        renderWzPresets();
+      });
+      host.appendChild(b);
+    });
+  }
+
+  async function finishWelcome() {
+    const games = Object.assign({}, state.gameProfiles || {});
+    wz.games.forEach((g) => { if (!games[g]) games[g] = '*'; });
+    Object.keys(games).forEach((g) => { if (games[g] === '*' && !wz.games.has(g)) delete games[g]; });
+    const gameOnly = $('#wzGameOnly').checked && wz.games.size > 0;
+    await api.setGames({ gameProfiles: games, gameOnly: gameOnly });
+    if (wz.mode && wz.mode !== state.displayMode) await api.setDisplayMode(wz.mode);
+    await api.setSettings({ hideFromCapture: $('#wzCapture').checked, startHidden: state.isPackaged && $('#wzAuto').checked ? true : !!state.startHidden });
+    if (state.isPackaged && $('#wzAuto').checked !== !!state.autoStart) await api.setAutoStart($('#wzAuto').checked);
+    await api.setCrosshair(canon());
+    if (!state.overlayVisible) await api.setOverlay(true);
+    closeWelcome();
+    toast(gameOnly ? 'All set – your crosshair appears when your game is in front (' + state.hotkey + ' hides it)' : 'All set – your crosshair is on (' + state.hotkey + ' hides it)');
+  }
+
+  function initWelcome() {
+    $('#wzSkip').addEventListener('click', closeWelcome);
+    $('#wzBack').addEventListener('click', () => { if (wz.step > 1) { wz.step -= 1; wzShow(); } });
+    $('#wzNext').addEventListener('click', () => {
+      if (wz.step === 1) {
+        addWzExe($('#wzExe').value);
+        $('#wzExe').value = '';
+        wz.step = 2;
+        renderWzPresets();
+      } else if (wz.step === 2) {
+        wz.step = 3;
+      } else {
+        finishWelcome();
+        return;
+      }
+      wzShow();
+    });
+    document.querySelectorAll('.wz-mode').forEach((b) => b.addEventListener('click', () => {
+      wz.mode = b.dataset.mode;
+      document.querySelectorAll('.wz-mode').forEach((x) => x.classList.toggle('selected', x === b));
+    }));
+    $('#wzExe').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { addWzExe($('#wzExe').value); $('#wzExe').value = ''; } });
+    $('#wzPick').addEventListener('click', async () => {
+      const sel = $('#wzPickSel');
+      const procs = await api.listProcs();
+      sel.textContent = '';
+      sel.appendChild(mk('option', { value: '', textContent: procs.length ? 'Choose a running app…' : 'None found' }));
+      procs.forEach((n) => sel.appendChild(mk('option', { value: n, textContent: n })));
+      sel.hidden = false;
+    });
+    $('#wzPickSel').addEventListener('change', (e) => { addWzExe(e.target.value); e.target.hidden = true; });
+    const useCode = () => {
+      const v = $('#wzCode').value;
+      if (!v.trim()) return;
+      if (importFrom(v)) { wz.picked = -1; renderWzPresets(); $('#wzCode').value = ''; }
+    };
+    $('#wzCodeBtn').addEventListener('click', useCode);
+    $('#wzCode').addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') useCode(); });
+    $('#wzHotkey').addEventListener('click', () => captureKeys($('#wzHotkey'), (acc) => {
+      if (!acc) { api.pauseHotkey(false); wzShow(); return; }
+      api.setHotkey(acc, 'toggle').then((r) => {
+        state.hotkey = r.hotkeys.toggle;
+        if (!r.ok) toast('Could not use that shortcut (already taken?)');
+        wzShow();
+        renderSettings();
+      });
+    }));
   }
 
   function wireHotkeyCapture() {
@@ -2228,7 +2475,8 @@
       const row = mk('div', { className: 'grow' });
       row.appendChild(mk('b', { textContent: exe }));
       const sel = mk('select');
-      const names = profNames.indexOf(games[exe]) >= 0 ? profNames : profNames.concat([games[exe]]);
+      const names = games[exe] === '*' || profNames.indexOf(games[exe]) >= 0 ? profNames : profNames.concat([games[exe]]);
+      sel.appendChild(mk('option', { value: '*', textContent: 'Keep current crosshair' }));
       names.forEach((n) => sel.appendChild(mk('option', { value: n, textContent: n })));
       sel.value = games[exe];
       sel.addEventListener('change', () => api.setGames({ gameProfiles: Object.assign({}, games, { [exe]: sel.value }) }));
@@ -2245,12 +2493,11 @@
     const gp = $('#gameProf');
     const keep = gp.value;
     gp.textContent = '';
+    gp.appendChild(mk('option', { value: '*', textContent: 'Keep current crosshair' }));
     profNames.forEach((n) => gp.appendChild(mk('option', { value: n, textContent: n })));
-    if (keep && profNames.indexOf(keep) >= 0) gp.value = keep;
-    $('#gameAdd').disabled = !profNames.length;
-    $('#gameNote').textContent = profNames.length
-      ? (state.watcherOn ? 'Watching the active window.' : '')
-      : 'Save at least one crosshair first (Crosshair tab, Saved crosshairs), then pick it here.';
+    if (keep && (keep === '*' || profNames.indexOf(keep) >= 0)) gp.value = keep;
+    $('#gameAdd').disabled = false;
+    $('#gameNote').textContent = state.watcherOn ? 'Watching the active window.' : '';
   }
 
   function initGames() {
@@ -2313,6 +2560,29 @@
     initGames();
     initAccent();
     $('#startHidden').addEventListener('change', (e) => api.setSettings({ startHidden: e.target.checked }));
+    $('#gameOnly').addEventListener('change', (e) => {
+      api.setGames({ gameOnly: e.target.checked });
+      if (e.target.checked && !Object.keys(state.gameProfiles || {}).length) toast('Now add your game under Games so the crosshair knows when to show');
+    });
+    $('#checkUpdates').addEventListener('change', (e) => api.setCheckUpdates(e.target.checked));
+    $('#updateCheckBtn').addEventListener('click', async () => {
+      $('#updateCheckBtn').disabled = true;
+      const r = await api.checkUpdate();
+      $('#updateCheckBtn').disabled = false;
+      toast(!r || !r.ok ? 'Could not reach GitHub' : (r.update ? 'Version ' + r.update.version + ' is available' : 'You\u2019re on the latest version'));
+    });
+    $('#updateOpenBtn').addEventListener('click', () => api.openUpdate());
+    const runUpdate = () => {
+      const u = state.update;
+      if (!u) return;
+      if (u.phase === 'ready') api.installUpdate();
+      else if (u.canInstall && u.phase !== 'error') { api.downloadUpdate(); toast('Downloading the update\u2026 keep playing, it installs when you restart'); }
+      else api.openUpdate();
+    };
+    $('#updateLine').addEventListener('click', runUpdate);
+    $('#updateInstallBtn').addEventListener('click', runUpdate);
+    $('#hideCapture').addEventListener('change', (e) => api.setSettings({ hideFromCapture: e.target.checked }));
+    $('#runSetupBtn').addEventListener('click', () => openWelcome());
     $('#lowPriority').addEventListener('change', (e) => api.setSettings({ lowPriority: e.target.checked }));
     $('#fpsSel').addEventListener('change', (e) => api.setSettings({ fpsCap: Number(e.target.value) }));
     $('#memSel').addEventListener('change', (e) => api.setSettings({ memoryMode: e.target.value }));
@@ -2681,7 +2951,7 @@
     $('#homeEdit').addEventListener('click', () => showTab('crosshair'));
     $('#displaySel').addEventListener('change', (e) => api.setDisplay(e.target.value === '' ? null : Number(e.target.value)));
     $('#autoStart').addEventListener('change', (e) => api.setAutoStart(e.target.checked));
-    $('#resetBtn').addEventListener('click', () => { applyNewConfig(Crosshair.DEFAULT_DESIGN); toast('Crosshair reset'); });
+    $('#resetBtn').addEventListener('click', () => loadDefault());
     wireHotkeyCapture();
     $('#shapeClose').addEventListener('click', closeShapePicker);
     $('#shapeModal').addEventListener('mousedown', (ev) => { if (ev.target === $('#shapeModal')) closeShapePicker(); });
@@ -2693,6 +2963,10 @@
     renderHomeGrid();
     refreshDisplays();
     updateSavedState();
+    initWelcome();
+    // Existing users (already have saved crosshairs) skip the guide; it's in Settings > Reset if wanted.
+    if (!state.onboarded && Object.keys(state.profiles || {}).length) api.setSettings({ onboarded: true });
+    else if (!state.onboarded) openWelcome();
 
     api.onState((s) => {
       state = s;

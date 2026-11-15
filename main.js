@@ -1,9 +1,10 @@
 'use strict';
 
 const {
-  app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, nativeImage, clipboard, dialog
+  app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu, nativeImage, clipboard, dialog, shell
 } = require('electron');
 const path = require('path');
+const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const { spawn, execFile } = require('child_process');
@@ -53,6 +54,10 @@ let guideOn = false; // alignment guide shown on the overlay (not saved)
 let guideTimer = null;
 let followCenter = null; // physical-pixel centre of the game window we follow, or null
 let watcher = null; // PowerShell foreground-window watcher
+let gameFront = false; // a game from the Games list is the active window
+let updateInfo = null; // { version, url } when GitHub has a newer release
+const RELEASES_API = 'https://api.github.com/repos/TheMishez/EZ_Retical/releases/latest';
+const RELEASES_PAGE = 'https://github.com/TheMishez/EZ_Retical/releases/latest';
 let autoActive = false; // a per-game crosshair is currently applied
 let revertDesign = null; // what to go back to when leaving the game
 let revertProfile = null;
@@ -94,7 +99,7 @@ function cleanGames(g) {
   if (g && typeof g === 'object') {
     for (const [k, v] of Object.entries(g)) {
       const key = exeKey(k);
-      if (!key || BLOCKED_NAMES.has(key) || typeof v !== 'string' || !v || Object.keys(out).length >= 60) continue;
+      if (!key || BLOCKED_NAMES.has(key) || typeof v !== 'string' || !v || Object.keys(out).length >= 60) continue; // '*' = keep the current crosshair
       out[key] = String(v).slice(0, 40);
     }
   }
@@ -151,6 +156,10 @@ function loadConfig() {
     overlayOffsetX: Math.round(clampNum(raw.overlayOffsetX, -100, 100, 0)),
     overlayOffsetY: Math.round(clampNum(raw.overlayOffsetY, -100, 100, 0)),
     autoSwitch: !!raw.autoSwitch,
+    gameOnly: !!raw.gameOnly,
+    hideFromCapture: !!raw.hideFromCapture,
+    onboarded: !!raw.onboarded,
+    checkUpdates: raw.checkUpdates !== false,
     autoRevert: raw.autoRevert !== false,
     followWindow: !!raw.followWindow,
     gameProfiles: cleanGames(raw.gameProfiles),
@@ -194,6 +203,13 @@ function publicState() {
     overlayOffsetX: config.overlayOffsetX,
     overlayOffsetY: config.overlayOffsetY,
     autoSwitch: config.autoSwitch,
+    gameOnly: config.gameOnly,
+    hideFromCapture: config.hideFromCapture,
+    onboarded: config.onboarded,
+    gameFront,
+    checkUpdates: config.checkUpdates,
+    update: publicUpdate(),
+    version: app.getVersion(),
     autoRevert: config.autoRevert,
     followWindow: config.followWindow,
     gameProfiles: config.gameProfiles,
@@ -323,7 +339,9 @@ function fitOverlay() {
 
 function applyOverlayVisibility() {
   if (!overlayWin || overlayWin.isDestroyed()) return;
-  if (config.overlayVisible) {
+  // "Only while a game is in front": hide until the watcher sees a listed game.
+  const gameOk = !config.gameOnly || !watcher || gameFront;
+  if (config.overlayVisible && gameOk) {
     positionOverlay();
     overlayWin.showInactive();
     overlayWin.setAlwaysOnTop(true, 'screen-saver');
@@ -364,8 +382,15 @@ function createOverlay() {
   });
   overlayWin.setIgnoreMouseEvents(true);
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
+  applyCaptureProtection();
   overlayWin.loadFile(path.join(__dirname, 'overlay.html'));
   overlayWin.once('ready-to-show', applyOverlayVisibility);
+}
+
+// Keeps the crosshair out of OBS, Discord screen share and screenshots when asked (Windows 10 2004+).
+function applyCaptureProtection() {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  try { overlayWin.setContentProtection(!!config.hideFromCapture); } catch (e) { logError(e); }
 }
 
 function setOverlayVisible(v) {
@@ -389,7 +414,7 @@ function createEditor() {
     minWidth: 920,
     minHeight: 660,
     show: false,
-    backgroundColor: '#12141a',
+    backgroundColor: '#0b0b0b',
     title: 'EZ Reticle',
     icon: icon64,
     autoHideMenuBar: true,
@@ -430,6 +455,9 @@ function updateTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open editor', click: showEditor },
     { label: config.overlayVisible ? 'Hide crosshair' : 'Show crosshair', click: toggleOverlay },
+    ...(updateInfo ? [{ type: 'separator' }, updatePhase === 'ready'
+      ? { label: 'Restart to update to v' + updateInfo.version, click: installUpdate }
+      : { label: 'Update available: v' + updateInfo.version, click: () => { if (updateInfo.canInstall) { showEditor(); downloadUpdate(); } else shell.openExternal(updateInfo.url); } }] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() }
   ]));
@@ -567,7 +595,7 @@ const OWN_PROCS = new Set(['electron', 'ez reticle', 'ez-reticle', 'ezreticle', 
 
 function wantWatcher() {
   return process.platform === 'win32' &&
-    ((config.autoSwitch || config.followWindow) && Object.keys(config.gameProfiles).length > 0);
+    ((config.autoSwitch || config.followWindow || config.gameOnly) && Object.keys(config.gameProfiles).length > 0);
 }
 
 function stopWatcher() {
@@ -575,6 +603,8 @@ function stopWatcher() {
   watcher = null;
   followCenter = null;
   lastGame = '';
+  gameFront = false;
+  applyOverlayVisibility();
   if (autoActive && config.autoRevert && revertDesign) applyDesign(revertDesign, revertProfile);
   autoActive = false;
 }
@@ -583,6 +613,7 @@ function syncWatcher() {
   const want = wantWatcher();
   if (want && !watcher) startWatcher();
   else if (!want && watcher) { stopWatcher(); positionOverlay(); }
+  applyOverlayVisibility();
   broadcastState();
 }
 
@@ -604,7 +635,7 @@ function startWatcher() {
       if (line) onForeground(line, own);
     }
   });
-  child.on('exit', () => { if (watcher === child) { watcher = null; followCenter = null; broadcastState(); } });
+  child.on('exit', () => { if (watcher === child) { watcher = null; followCenter = null; gameFront = false; applyOverlayVisibility(); broadcastState(); } });
   child.on('error', (e) => { logError(e); if (watcher === child) watcher = null; });
 }
 
@@ -612,8 +643,13 @@ function onForeground(line, own) {
   const parts = line.split('|');
   const name = exeKey(parts[0]);
   if (!name || name === own || OWN_PROCS.has(name)) return; // ignore our own windows
-  const prof = config.gameProfiles[name];
+  const listed = config.gameProfiles[name];
+  const prof = listed === '*' ? '' : listed;
   lastGame = name;
+  if (gameFront !== !!listed) {
+    gameFront = !!listed;
+    if (config.gameOnly) { applyOverlayVisibility(); broadcastState(); }
+  }
   if (config.autoSwitch) {
     if (prof && config.profiles[prof]) {
       if (!autoActive) { revertDesign = config.crosshair; revertProfile = activeProfile; }
@@ -624,7 +660,7 @@ function onForeground(line, own) {
       if (config.autoRevert && revertDesign) applyDesign(revertDesign, revertProfile);
     }
   }
-  if (config.followWindow && prof) {
+  if (config.followWindow && listed) {
     const x = Number(parts[1]);
     const y = Number(parts[2]);
     const w = Number(parts[3]);
@@ -796,6 +832,8 @@ function setupIpc() {
     if ('fpsCap' in p && [0, 30, 60, 120].indexOf(p.fpsCap) >= 0) config.fpsCap = p.fpsCap;
     if ('lowPriority' in p) config.lowPriority = !!p.lowPriority;
     if ('startHidden' in p) config.startHidden = !!p.startHidden;
+    if ('onboarded' in p) config.onboarded = !!p.onboarded;
+    if ('hideFromCapture' in p) { config.hideFromCapture = !!p.hideFromCapture; applyCaptureProtection(); }
     if ('accentColor' in p && /^#[0-9a-f]{6}$/i.test(String(p.accentColor))) config.accentColor = String(p.accentColor).toLowerCase();
     if ('memoryMode' in p && ['balanced', 'low', 'lowest'].indexOf(p.memoryMode) >= 0) config.memoryMode = p.memoryMode;
     let moved = false;
@@ -817,16 +855,30 @@ function setupIpc() {
     if ('autoSwitch' in p) config.autoSwitch = !!p.autoSwitch;
     if ('autoRevert' in p) config.autoRevert = !!p.autoRevert;
     if ('followWindow' in p) config.followWindow = !!p.followWindow;
+    if ('gameOnly' in p) config.gameOnly = !!p.gameOnly;
     if (watcher && !config.followWindow && followCenter) { followCenter = null; positionOverlay(); }
     // Re-evaluate the current foreground app against the new rules.
     if (watcher) { stopWatcher(); positionOverlay(); }
     syncWatcher();
+    applyOverlayVisibility();
     saveSoon();
     broadcastState();
     return true;
   });
 
   ipcMain.handle('procs:list', () => listProcesses());
+
+  ipcMain.handle('update:set', (_e, on) => {
+    config.checkUpdates = !!on;
+    if (config.checkUpdates) checkForUpdate(); else { updateInfo = null; updateTrayMenu(); }
+    saveSoon();
+    broadcastState();
+    return config.checkUpdates;
+  });
+  ipcMain.handle('update:check', () => checkForUpdate(true));
+  ipcMain.handle('update:open', () => { shell.openExternal(updateInfo ? updateInfo.url : RELEASES_PAGE); return true; });
+  ipcMain.handle('update:download', () => downloadUpdate());
+  ipcMain.handle('update:install', () => installUpdate());
 
   ipcMain.handle('app:relaunch', () => {
     saveNow();
@@ -981,6 +1033,115 @@ function perfSnapshot() {
   };
 }
 
+// ---------------------------------------------------------------- update check
+// "1.1.0", "v1.2", "EZ_RecticalV1.2.1" -> [1, 2, 1]
+function versionParts(v) {
+  const m = String(v || '').match(/(\d+(?:\.\d+)*)\s*$/) || String(v || '').match(/(\d+(?:\.\d+)+)/);
+  return m ? m[1].split('.').map(Number) : null;
+}
+
+function isNewer(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || 0, y = b[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
+// Installed builds update in place with electron-updater (download on request, install on restart).
+// Running from source, or if a release has no latest.yml, it falls back to a link to the release page.
+let autoUpdater = null;
+let updatePhase = ''; // '', 'downloading', 'ready', 'error'
+let updatePercent = 0;
+function initAutoUpdater() {
+  if (!app.isPackaged || autoUpdater) return autoUpdater;
+  try { autoUpdater = require('electron-updater').autoUpdater; } catch (e) { logError(e); return null; }
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null;
+  autoUpdater.on('download-progress', (pr) => { updatePhase = 'downloading'; updatePercent = Math.round(pr.percent || 0); broadcastState(); });
+  autoUpdater.on('update-downloaded', () => { updatePhase = 'ready'; updatePercent = 100; updateTrayMenu(); broadcastState(); });
+  autoUpdater.on('error', (e) => { logError(e); if (updatePhase === 'downloading') { updatePhase = 'error'; broadcastState(); } });
+  return autoUpdater;
+}
+
+function publicUpdate() {
+  if (!updateInfo) return null;
+  return Object.assign({}, updateInfo, { phase: updatePhase, percent: updatePercent });
+}
+
+function downloadUpdate() {
+  if (!updateInfo || !updateInfo.canInstall || !autoUpdater) { shell.openExternal(updateInfo ? updateInfo.url : RELEASES_PAGE); return false; }
+  if (updatePhase === 'ready') { installUpdate(); return true; }
+  if (updatePhase === 'downloading') return true;
+  updatePhase = 'downloading';
+  updatePercent = 0;
+  broadcastState();
+  autoUpdater.downloadUpdate().catch((e) => { logError(e); updatePhase = 'error'; broadcastState(); });
+  return true;
+}
+
+function installUpdate() {
+  if (!autoUpdater || updatePhase !== 'ready') return false;
+  quitting = true;
+  setImmediate(() => autoUpdater.quitAndInstall(true, true));
+  return true;
+}
+
+async function checkWithUpdater() {
+  const u = initAutoUpdater();
+  if (!u) return null;
+  try {
+    const r = await u.checkForUpdates();
+    const v = r && r.updateInfo && r.updateInfo.version;
+    const latest = versionParts(v), mine = versionParts(app.getVersion());
+    if (latest && mine && isNewer(latest, mine)) {
+      updateInfo = { version: latest.join('.'), url: RELEASES_PAGE, canInstall: true };
+    } else if (updatePhase !== 'ready') {
+      updateInfo = null;
+    }
+    return { ok: true };
+  } catch (e) {
+    return null; // e.g. the release has no latest.yml: use the plain check instead
+  }
+}
+
+// Asks GitHub for the latest release once at start and every 6 hours.
+async function checkForUpdate(manual) {
+  if (!config.checkUpdates && !manual) return null;
+  if (updatePhase === 'downloading' || updatePhase === 'ready') return { ok: true, update: publicUpdate() };
+  const viaUpdater = await checkWithUpdater();
+  if (viaUpdater) { updateTrayMenu(); broadcastState(); return { ok: true, update: publicUpdate() }; }
+  return checkLatestRelease();
+}
+
+function checkLatestRelease() {
+  return new Promise((resolve) => {
+    const req = https.get(RELEASES_API, { headers: { 'User-Agent': 'EZ-Reticle/' + app.getVersion(), Accept: 'application/vnd.github+json' }, timeout: 10000 }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (body.length < 400000) body += d; });
+      res.on('end', () => {
+        let r = null;
+        try {
+          const j = JSON.parse(body);
+          const latest = versionParts(j.tag_name) || versionParts(j.name);
+          const mine = versionParts(app.getVersion());
+          if (res.statusCode === 200 && latest && mine && isNewer(latest, mine) && !j.draft && !j.prerelease) {
+            r = { version: latest.join('.'), url: typeof j.html_url === 'string' && /^https:\/\/github\.com\//.test(j.html_url) ? j.html_url : RELEASES_PAGE };
+          }
+          updateInfo = r;
+          updateTrayMenu();
+          broadcastState();
+          resolve({ ok: res.statusCode === 200, update: publicUpdate() });
+        } catch (e) { resolve({ ok: false, update: publicUpdate() }); }
+      });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve({ ok: false, update: publicUpdate() }));
+  });
+}
+
 // ---------------------------------------------------------------- lifecycle
 // Never show a crash dialog while someone is gaming; log it instead.
 function logError(err) {
@@ -1038,6 +1199,8 @@ if (!gotLock) {
       powerMonitor.on('unlock-screen', () => setTimeout(refresh, 500));
     } catch (e) { /* not available */ }
     syncWatcher();
+    setTimeout(() => checkForUpdate(), 8000);
+    setInterval(() => checkForUpdate(), 6 * 3600 * 1000);
 
     startTopTimer();
     applyPriority();
