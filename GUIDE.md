@@ -108,7 +108,7 @@ npm install
 npm run dist
 ```
 
-This produces `dist/EZ-Reticle-Setup-<version>.exe` with a desktop shortcut and the app icon (`build/icon.png`, regenerate with `node tools/make-icon.js`). The installed build also enables "Start with Windows".
+This produces `dist/EZ-Reticle-Setup-<version>.exe` with a desktop shortcut and the app icon (`icon.png`). The installed build also enables "Start with Windows".
 
 ## CS2 share codes
 
@@ -153,7 +153,7 @@ New-format codes store gap, length and thickness in pixels at the code's screen 
 
 ## Branding
 
-The EZ Reticle logo is the installer/exe icon (`build/icon.png`), the window and tray icon and the header logo (`logo.png`, `logo-64.png`). Accents default to green and can be changed in Settings > Appearance.
+The EZ Reticle logo is the installer/exe icon (`icon.png`), the window and tray icon and the header logo (`logo.png`, `logo-64.png`). Accents default to EZGG yellow and can be changed in Settings > Appearance.
 
 ## App accent color
 

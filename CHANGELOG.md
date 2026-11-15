@@ -2,7 +2,7 @@
 
 Windows-first crosshair overlay built with Electron: a transparent, click-through, always-on-top overlay with a layered crosshair designer.
 
-## New Designer (redesign)
+## v1.1.0: New Designer
 - Three-panel layout in the EZGG matte black + yellow look: Layers on the left, a large canvas in the middle, the Inspector on the right, and a top bar with name, hotkey, saved status, New / Undo / Redo / Share / Save / Apply.
 - **Canvas editing**: click a layer to select it, drag to move, corner handles to resize, top handle to rotate (Shift = 15° steps). Grid and Snap toggles (Alt moves freely), zoom with −/+ or the mouse wheel, and Fit.
 - **Multi-select**: Shift/Ctrl-click layers in the list or on the canvas, Ctrl+A for all. Moving, rotating, hiding, duplicating, deleting and most inspector settings apply to every selected layer.
@@ -12,7 +12,9 @@ Windows-first crosshair overlay built with Electron: a transparent, click-throug
 - **Per-crosshair hotkeys**: give a saved crosshair its own hotkey from the top bar to equip it in game.
 - Saved crosshairs moved into the dropdown next to the name; the Save button saves under that name (Ctrl+S).
 - Shortcuts: Ctrl+D duplicate, Delete, H hide, G grid, F fit, Ctrl+[ / Ctrl+] reorder, arrow keys nudge.
-- Default accent is now EZGG yellow.
+- Default accent is now EZGG yellow, with neutral black and grey panels.
+- 1:1 preview backgrounds: CS2, Deadlock, grass, sky, dark, light, or your own screenshot.
+- Windows installer is built automatically by GitHub Actions for each release.
 
 ## Core
 - Transparent click-through always-on-top overlay, tray icon, global hotkeys (toggle / next / previous crosshair).
